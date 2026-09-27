@@ -25,6 +25,25 @@ const CMD_INSTALL = "pypilot.installPackage";
 const CMD_RECREATE = "pypilot.recreateWithPython";
 const CMD_INSTALL_UV = "pypilot.installUvGlobally";
 
+/**
+ * Run a server command that changes the environment and report whether it
+ * worked. Since helper v1.0.4 these answer `{ ok: boolean }`; older helpers
+ * answer `null`, which counts as success as it always has. The server has
+ * already shown its own message naming the failed step, so callers only need
+ * to avoid claiming success.
+ */
+async function runServerCommand(
+  client: LanguageClient,
+  command: string,
+  args: unknown[] = []
+): Promise<boolean> {
+  const result = await client.sendRequest(ExecuteCommandRequest.type, {
+    command,
+    arguments: args,
+  });
+  return (result as { ok?: boolean } | null)?.ok !== false;
+}
+
 export function registerCommands(
   context: vscode.ExtensionContext,
   client: LanguageClient,
@@ -45,10 +64,10 @@ export function registerCommands(
       async (progress) => {
         progress.report({ message: "Setting up the environment…" });
         try {
-          await client.sendRequest(ExecuteCommandRequest.type, {
-            command: CMD_FIX,
-            arguments: [],
-          });
+          if (!(await runServerCommand(client, CMD_FIX))) {
+            statusBar.setStatus("error", "setup failed");
+            return;
+          }
           statusBar.setStatus("ok");
           vscode.window.showInformationMessage(
             "PyPilot: environment set up successfully."
@@ -97,10 +116,10 @@ export function registerCommands(
         try {
           // Reuse the setup command — it recomputes the intersection and
           // rebuilds the venv on the correct Python.
-          await client.sendRequest(ExecuteCommandRequest.type, {
-            command: CMD_FIX,
-            arguments: [],
-          });
+          if (!(await runServerCommand(client, CMD_FIX))) {
+            statusBar.setStatus("error", "fix failed");
+            return;
+          }
           statusBar.setStatus("ok");
           vscode.window.showInformationMessage("PyPilot: Python version fixed.");
         } catch (err) {
@@ -119,10 +138,10 @@ export function registerCommands(
       async (progress) => {
         progress.report({ message: "Re-pinning torch/TensorFlow to the driver-matched build…" });
         try {
-          await client.sendRequest(ExecuteCommandRequest.type, {
-            command: CMD_FIX,
-            arguments: [],
-          });
+          if (!(await runServerCommand(client, CMD_FIX))) {
+            statusBar.setStatus("error", "CUDA fix failed");
+            return;
+          }
           statusBar.setStatus("ok");
           vscode.window.showInformationMessage(
             "PyPilot: CUDA build re-pinned for your driver."
@@ -183,10 +202,10 @@ export function registerCommands(
       async (progress) => {
         progress.report({ message: `Installing ${pkg}…` });
         try {
-          await client.sendRequest(ExecuteCommandRequest.type, {
-            command: CMD_INSTALL,
-            arguments: [pkg],
-          });
+          if (!(await runServerCommand(client, CMD_INSTALL, [pkg]))) {
+            statusBar.setStatus("error", "install failed");
+            return;
+          }
           statusBar.setStatus("ok");
           vscode.window.showInformationMessage(`PyPilot: installed ${pkg}.`);
         } catch (err) {
@@ -267,11 +286,8 @@ export function registerCommands(
       async (progress) => {
         progress.report({ message: "Installing uv globally…" });
         try {
-          await client.sendRequest(ExecuteCommandRequest.type, {
-            command: CMD_INSTALL_UV,
-            arguments: [],
-          });
-          statusBar.setStatus("ok");
+          const ok = await runServerCommand(client, CMD_INSTALL_UV);
+          statusBar.setStatus(ok ? "ok" : "idle");
         } catch (err) {
           statusBar.setStatus("idle");
           vscode.window.showErrorMessage(`PyPilot: uv install failed. ${err}`);
