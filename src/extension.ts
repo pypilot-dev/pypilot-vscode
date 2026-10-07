@@ -68,6 +68,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Activate for Python files and the manifest formats PyPilot understands.
     documentSelector: [
       { scheme: "file", language: "python" },
+      // Python cells inside notebooks (.ipynb). The server does not advertise
+      // notebookDocumentSync, so vscode-languageclient syncs each cell as an
+      // ordinary text document (didOpen/didChange keyed by the cell URI),
+      // which is all diagnostics and code actions need.
+      { scheme: "vscode-notebook-cell", language: "python" },
       { scheme: "file", pattern: "**/requirements.txt" },
       { scheme: "file", pattern: "**/pyproject.toml" },
       { scheme: "file", pattern: "**/environment.yml" },

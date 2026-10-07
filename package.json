@@ -31,7 +31,8 @@
     "workspaceContains:**/*.py",
     "workspaceContains:requirements.txt",
     "workspaceContains:pyproject.toml",
-    "workspaceContains:environment.yml"
+    "workspaceContains:environment.yml",
+    "onNotebook:jupyter-notebook"
   ],
   "main": "./out/extension.js",
   "contributes": {
