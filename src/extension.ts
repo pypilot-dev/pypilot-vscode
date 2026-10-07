@@ -2,6 +2,7 @@
  * extension.ts — PyPilot VS Code extension entry point.
  *
  * Activation:
+ *   0. Start `.venv` auto-selection (venv.ts); independent of the helper.
  *   1. Locate / download the `pypilot` helper binary (downloader.ts).
  *   2. Start the language client (LanguageClient wrapping `pypilot lsp`).
  *   3. Register the status bar item.
@@ -26,11 +27,17 @@ import { PyPilotStatusBar } from "./statusBar";
 import { registerCommands } from "./commands";
 import { PyPilotTaskProvider } from "./tasks";
 import { ReportPanel } from "./webview/reportPanel";
+import { registerVenvSelection } from "./venv";
 
 let client: LanguageClient | undefined;
 let statusBar: PyPilotStatusBar | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  // ── 0. Project .venv selection ───────────────────────────────────────────
+  // Registered first because it only talks to the Python extensions: it must
+  // keep working even if the helper binary cannot be found below.
+  registerVenvSelection(context);
+
   // ── 1. Resolve the helper binary ─────────────────────────────────────────
   let helperPath: string;
   let helperInfo: Awaited<ReturnType<typeof ensureHelper>> | undefined;

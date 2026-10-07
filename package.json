@@ -91,6 +91,11 @@
         "command": "pypilot.updateHelper",
         "title": "PyPilot: Check for Helper Updates",
         "icon": "$(sync)"
+      },
+      {
+        "command": "pypilot.useProjectVenv",
+        "title": "PyPilot: Use Project .venv",
+        "icon": "$(symbol-namespace)"
       }
     ],
     "configuration": {
@@ -125,6 +130,12 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically scan the workspace when it is first opened.",
+          "scope": "resource"
+        },
+        "pypilot.autoSelectVenv": {
+          "type": "boolean",
+          "default": true,
+          "description": "Make the workspace's .venv the active Python interpreter (and so the recommended notebook kernel) when it is created or changed, and on startup when no interpreter inside the workspace is selected. Requires the Python extension. The \"PyPilot: Use Project .venv\" command works regardless of this setting.",
           "scope": "resource"
         },
         "pypilot.dataRefreshDays": {
