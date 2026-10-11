@@ -3,9 +3,10 @@
  *
  * Activation:
  *   0. Start `.venv` auto-selection (venv.ts); independent of the helper.
- *   1. Locate / download the `pypilot` helper binary (downloader.ts).
- *   2. Start the language client (LanguageClient wrapping `pypilot lsp`).
- *   3. Register the status bar item.
+ *   1. Register the status bar item (before the helper lookup, so that a
+ *      failed download still leaves an indicator behind).
+ *   2. Locate / download the `pypilot` helper binary (downloader.ts).
+ *   3. Start the language client (LanguageClient wrapping `pypilot lsp`).
  *   4. Register all command palette handlers.
  *   5. Register the task provider.
  *   6. On workspace open: if auto-check is on, run a silent scan and surface
@@ -19,7 +20,6 @@ import {
   LanguageClient,
   LanguageClientOptions,
   ServerOptions,
-  TransportKind,
 } from "vscode-languageclient/node";
 
 import { ensureHelper, checkForHelperUpdate } from "./downloader";
@@ -38,7 +38,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // keep working even if the helper binary cannot be found below.
   registerVenvSelection(context);
 
-  // ── 1. Resolve the helper binary ─────────────────────────────────────────
+  // ── 1. Status bar ─────────────────────────────────────────────────────────
+  // Created before the helper lookup so that a failed download still leaves a
+  // visible indicator behind instead of nothing at all.
+  statusBar = new PyPilotStatusBar();
+  context.subscriptions.push({ dispose: () => statusBar?.dispose() });
+
+  // ── 2. Resolve the helper binary ─────────────────────────────────────────
   let helperPath: string;
   let helperInfo: Awaited<ReturnType<typeof ensureHelper>> | undefined;
   try {
@@ -46,6 +52,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     helperPath = helperInfo.path;
     console.log(`PyPilot: using helper ${helperInfo.path} v${helperInfo.version} (managed=${helperInfo.managed})`);
   } catch (err) {
+    statusBar.setStatus("unavailable", "helper not found");
     vscode.window.showErrorMessage(
       `PyPilot: could not locate the helper binary. ${err}\n` +
         "Install `pypilot` manually and ensure it is on your PATH, or check your internet connection."
@@ -53,17 +60,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return;
   }
 
-  // ── 1b. Background update check (non-blocking) ───────────────────────────
+  // ── 2b. Background update check (non-blocking) ───────────────────────────
   // Runs after activation so it never delays startup.
   if (helperInfo) {
     checkForHelperUpdate(context, helperInfo).catch((err) => {
       console.warn(`PyPilot: update check failed (non-fatal): ${err}`);
     });
   }
-
-  // ── 2. Status bar ─────────────────────────────────────────────────────────
-  statusBar = new PyPilotStatusBar();
-  context.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
   // ── 3. Language client ────────────────────────────────────────────────────
   const serverOptions: ServerOptions = {
@@ -113,13 +116,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push({ dispose: () => client?.stop() });
 
   // ── 4. Commands ───────────────────────────────────────────────────────────
-  registerCommands(context, client, statusBar);
+  registerCommands(context, client, statusBar, helperPath);
 
   // ── 5. Task provider ──────────────────────────────────────────────────────
   context.subscriptions.push(
     vscode.tasks.registerTaskProvider(
       PyPilotTaskProvider.taskType,
-      new PyPilotTaskProvider()
+      new PyPilotTaskProvider(helperPath)
     )
   );
 
@@ -127,7 +130,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const cfg = vscode.workspace.getConfiguration("pypilot");
   if (cfg.get<boolean>("autoCheckOnOpen", true)) {
     // Delay slightly so the LSP server has time to start and run its first scan.
-    setTimeout(() => runOnboardingCheck(context), 3000);
+    setTimeout(() => {
+      runOnboardingCheck(context).catch((err) => {
+        console.warn(`PyPilot: onboarding check failed (non-fatal): ${err}`);
+      });
+    }, 3000);
   }
 }
 
@@ -148,17 +155,17 @@ async function runOnboardingCheck(context: vscode.ExtensionContext): Promise<voi
 
   if (notifications === "off") return;
 
-  // The LSP server handles the actual scan and will send us a
-  // showMessageRequest if there's anything to report. The middleware above
-  // intercepts it and shows a VS Code-native popup. No extra work needed here
-  // for the default flow.
+  // The LSP server runs the scan itself and reports anything it finds with
+  // window/showMessage(Request), which vscode-languageclient turns into VS
+  // Code notifications on its own. `pypilot.notifications` does not filter
+  // those yet — this function only adds the "all" hook below.
   //
   // If the user chose "all" notifications, also register a command to open
   // the report panel immediately on any informational finding.
   if (notifications === "all") {
     context.subscriptions.push(
       vscode.commands.registerCommand("pypilot._openReportInternal", () => {
-        ReportPanel.show(context);
+        ReportPanel.show();
       })
     );
   }

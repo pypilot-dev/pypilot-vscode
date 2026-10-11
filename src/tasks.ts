@@ -38,26 +38,33 @@ const TASK_LABELS: Record<string, string> = {
 export class PyPilotTaskProvider implements vscode.TaskProvider {
   static readonly taskType = "pypilot";
 
+  /**
+   * `helperPath` is the binary the extension actually resolved (a PATH install
+   * or the managed download). Tasks run that exact path so they still work on
+   * machines where `pypilot` is not on the shell PATH.
+   */
+  constructor(private readonly helperPath: string = "pypilot") {}
+
   provideTasks(): vscode.Task[] {
-    return PREDEFINED_TASKS.map(buildTask);
+    return PREDEFINED_TASKS.map((def) => buildTask(def, this.helperPath));
   }
 
   resolveTask(task: vscode.Task): vscode.Task | undefined {
     const def = task.definition as PyPilotTaskDefinition;
     if (def.type === PyPilotTaskProvider.taskType && def.task) {
-      return buildTask(def);
+      return buildTask(def, this.helperPath);
     }
     return undefined;
   }
 }
 
-function buildTask(def: PyPilotTaskDefinition): vscode.Task {
+function buildTask(def: PyPilotTaskDefinition, helperPath: string): vscode.Task {
   const args = def.task.split(" ");
   if (def.package) {
     args.push(def.package);
   }
 
-  const shellExec = new vscode.ShellExecution("pypilot", args, {
+  const shellExec = new vscode.ShellExecution(helperPath, args, {
     // Use the workspace root so `pypilot` picks up the project's config.
     cwd: "${workspaceFolder}",
   });
