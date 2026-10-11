@@ -20,7 +20,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-const HELPER_REPO = 'Abdullah-Masood-05/pypilot';
+const HELPER_REPO = 'pypilot-dev/pypilot';
 const MIN_VERSION: [number, number, number] = [0, 1, 0];
 
 /** How often (in ms) to suppress the "update available" prompt after the user

@@ -9,15 +9,15 @@
   <a href="https://marketplace.visualstudio.com/items?itemName=AbdullahMasood-005.pypilot-vscode"><img src="https://vsmarketplacebadges.dev/installs-short/AbdullahMasood-005.pypilot-vscode.svg?label=installs&color=2ea44f" alt="Installs" /></a>
   <a href="https://marketplace.visualstudio.com/items?itemName=AbdullahMasood-005.pypilot-vscode&ssr=false#review-details"><img src="https://vsmarketplacebadges.dev/rating-short/AbdullahMasood-005.pypilot-vscode.svg?label=rating&color=fe7d37" alt="Rating" /></a>
   <a href="https://open-vsx.org/extension/AbdullahMasood-005/pypilot-vscode"><img src="https://img.shields.io/open-vsx/v/AbdullahMasood-005/pypilot-vscode?label=open%20vsx&color=a60ee5" alt="Open VSX version" /></a>
-  <a href="https://github.com/Abdullah-Masood-05/pypilot-vscode/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0" /></a>
-  <a href="https://github.com/Abdullah-Masood-05/pypilot-vscode"><img src="https://img.shields.io/github/stars/Abdullah-Masood-05/pypilot-vscode?style=social" alt="GitHub stars" /></a>
+  <a href="https://github.com/pypilot-dev/pypilot-vscode/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0" /></a>
+  <a href="https://github.com/pypilot-dev/pypilot-vscode"><img src="https://img.shields.io/github/stars/pypilot-dev/pypilot-vscode?style=social" alt="GitHub stars" /></a>
 </p>
 
-> ⭐ **Enjoying PyPilot?** If it saved you from a broken environment, please [star it on GitHub](https://github.com/Abdullah-Masood-05/pypilot-vscode) or [leave a rating](https://marketplace.visualstudio.com/items?itemName=AbdullahMasood-005.pypilot-vscode&ssr=false#review-details). It's free and it helps other Python developers find it.
+> ⭐ **Enjoying PyPilot?** If it saved you from a broken environment, please [star it on GitHub](https://github.com/pypilot-dev/pypilot-vscode) or [leave a rating](https://marketplace.visualstudio.com/items?itemName=AbdullahMasood-005.pypilot-vscode&ssr=false#review-details). It's free and it helps other Python developers find it.
 
 PyPilot inspects Python projects, figures out which Python versions your dependencies actually support, and creates a working virtual environment. It resolves driver and CUDA compatibility for PyTorch or TensorFlow, checks package wheels on PyPI, and flags broken imports directly in the editor without external API calls.
 
-This extension runs the same native Rust engine as [PyPilot for Zed](https://github.com/Abdullah-Masood-05/pypilot), integrated with VS Code surfaces: the command palette, status bar, progress indicators, interactive doctor report panel, and workspace tasks.
+This extension runs the same native Rust engine as [PyPilot for Zed](https://github.com/pypilot-dev/pypilot), integrated with VS Code surfaces: the command palette, status bar, progress indicators, interactive doctor report panel, and workspace tasks.
 
 ## Features
 
@@ -106,9 +106,9 @@ bun run package
 
 PyPilot is free and open source, built and maintained in spare time. If it helps you:
 
-- ⭐ [Star it on GitHub](https://github.com/Abdullah-Masood-05/pypilot-vscode): it's the easiest way to show support.
+- ⭐ [Star it on GitHub](https://github.com/pypilot-dev/pypilot-vscode): it's the easiest way to show support.
 - 📝 [Rate it on the Marketplace](https://marketplace.visualstudio.com/items?itemName=AbdullahMasood-005.pypilot-vscode&ssr=false#review-details): reviews help others decide to try it.
-- 🐛 [Report a bug or request a feature](https://github.com/Abdullah-Masood-05/pypilot-vscode/issues): reproducible environment problems are especially welcome.
+- 🐛 [Report a bug or request a feature](https://github.com/pypilot-dev/pypilot-vscode/issues): reproducible environment problems are especially welcome.
 
 ## License
 

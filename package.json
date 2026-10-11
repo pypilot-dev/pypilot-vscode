@@ -25,8 +25,12 @@
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Abdullah-Masood-05/pypilot-vscode"
+    "url": "https://github.com/pypilot-dev/pypilot-vscode"
   },
+  "bugs": {
+    "url": "https://github.com/pypilot-dev/pypilot-vscode/issues"
+  },
+  "homepage": "https://github.com/pypilot-dev/pypilot-vscode#readme",
   "activationEvents": [
     "workspaceContains:**/*.py",
     "workspaceContains:requirements.txt",
