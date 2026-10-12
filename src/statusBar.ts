@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 
-export type EnvStatus = 'ok' | 'warning' | 'error' | 'checking' | 'idle';
+export type EnvStatus = 'ok' | 'warning' | 'error' | 'checking' | 'idle' | 'unavailable';
 
 export class PyPilotStatusBar {
   private readonly item: vscode.StatusBarItem;
@@ -55,6 +55,17 @@ export class PyPilotStatusBar {
         this.item.text = '$(sync~spin) PyPilot: checking…';
         this.item.tooltip = 'PyPilot: scanning the workspace…';
         this.item.backgroundColor = undefined;
+        this.item.command = undefined;
+        break;
+
+      case 'unavailable':
+        this.item.text = `$(warning) PyPilot${detail ? `: ${detail}` : ''}`;
+        this.item.tooltip =
+          'PyPilot: the pypilot helper binary could not be located — see the error notification for details';
+        this.item.backgroundColor = new vscode.ThemeColor(
+          'statusBarItem.warningBackground'
+        );
+        // No command: activation stopped before any were registered.
         this.item.command = undefined;
         break;
 

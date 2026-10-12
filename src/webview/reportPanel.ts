@@ -19,7 +19,7 @@ export class ReportPanel {
   private readonly reportPath: string;
   private watcher?: fs.FSWatcher;
 
-  private constructor(context: vscode.ExtensionContext) {
+  private constructor() {
     this.reportPath = path.join(os.tmpdir(), "pypilot-report.md");
 
     this.panel = vscode.window.createWebviewPanel(
@@ -63,13 +63,13 @@ export class ReportPanel {
     this.refresh();
   }
 
-  static show(context: vscode.ExtensionContext): ReportPanel {
+  static show(): ReportPanel {
     if (ReportPanel.instance) {
       ReportPanel.instance.panel.reveal(vscode.ViewColumn.Beside);
       ReportPanel.instance.refresh();
       return ReportPanel.instance;
     }
-    ReportPanel.instance = new ReportPanel(context);
+    ReportPanel.instance = new ReportPanel();
     return ReportPanel.instance;
   }
 
@@ -312,15 +312,33 @@ function markdownToHtml(md: string): string {
   return out.join("\n");
 }
 
+/**
+ * HTML-escape. Quotes are escaped too, because this output is also placed
+ * inside attributes (`<a href="…">`); without it a `"` in the report could
+ * break out of the attribute.
+ */
 function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
+/** Inline emphasis, inline code and links. Link targets are restricted to
+ *  http(s) so a `javascript:` URL in the report never becomes a live link. */
 function inline(s: string): string {
   return esc(s)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
     .replace(/_(.+?)_/g, "<em>$1</em>")
     .replace(/`(.+?)`/g, "<code>$1</code>")
-    .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2">$1</a>');
+    .replace(
+      /\[(.+?)\]\((.+?)\)/g,
+      (_match, text: string, href: string) =>
+        /^https?:\/\//i.test(href)
+          ? `<a href="${href}">${text}</a>`
+          : `<code>${href}</code>`
+    );
 }

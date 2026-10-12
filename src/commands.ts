@@ -47,9 +47,14 @@ async function runServerCommand(
 export function registerCommands(
   context: vscode.ExtensionContext,
   client: LanguageClient,
-  statusBar: PyPilotStatusBar
+  statusBar: PyPilotStatusBar,
+  /** The binary the extension resolved: a PATH install or the managed download. */
+  helperPath: string
 ): void {
-  const r = (id: string, fn: () => Promise<void>) =>
+  // VS Code passes extra arguments into command callbacks (keybindings, other
+  // extensions). `never[]` keeps the zero-argument handlers type-safe while
+  // still letting `pypilot.install` accept an optional package name.
+  const r = (id: string, fn: (...args: never[]) => unknown) =>
     context.subscriptions.push(vscode.commands.registerCommand(id, fn));
 
   // ── pypilot.setup ─────────────────────────────────────────────────────────
@@ -183,10 +188,14 @@ export function registerCommands(
   });
 
   // ── pypilot.install ───────────────────────────────────────────────────────
-  r("pypilot.install", async () => {
+  // The report panel passes the package it offered to install; a palette
+  // invocation passes nothing and prompts as before.
+  r("pypilot.install", async (presetArg?: string) => {
+    const preset = typeof presetArg === "string" && presetArg.trim() ? presetArg.trim() : undefined;
     const pkg = await vscode.window.showInputBox({
       prompt: "Package name to install",
       placeHolder: "e.g. mediapipe, numpy, requests",
+      value: preset,
       validateInput: (v) => {
         const t = v.trim();
         if (!t) return "Please enter a package name.";
@@ -224,12 +233,14 @@ export function registerCommands(
         progress.report({ message: "Refreshing bundled data tables…" });
         try {
           // update-data runs via the CLI helper; trigger via terminal task.
+          // Run the resolved binary: on a managed download `pypilot` is not
+          // necessarily on the shell PATH.
           const task = new vscode.Task(
             { type: "shell" },
             vscode.TaskScope.Workspace,
             "pypilot update-data",
             "PyPilot",
-            new vscode.ShellExecution("pypilot update-data")
+            new vscode.ShellExecution(helperPath, ["update-data"])
           );
           await vscode.tasks.executeTask(task);
         } catch (err) {
@@ -253,12 +264,13 @@ export function registerCommands(
       async (progress) => {
         progress.report({ message: "Migrating conda environment…" });
         try {
+          // Same as update-data: run the resolved binary, not a bare name.
           const task = new vscode.Task(
             { type: "shell" },
             vscode.TaskScope.Workspace,
             "pypilot migrate-conda",
             "PyPilot",
-            new vscode.ShellExecution("pypilot migrate-conda")
+            new vscode.ShellExecution(helperPath, ["migrate-conda"])
           );
           await vscode.tasks.executeTask(task);
         } catch (err) {

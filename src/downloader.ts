@@ -14,6 +14,7 @@
  *  offer to download the managed copy so the user's system install is untouched.
  */
 
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as https from 'https';
 import * as os from 'os';
@@ -22,6 +23,13 @@ import * as vscode from 'vscode';
 
 const HELPER_REPO = 'pypilot-dev/pypilot';
 const MIN_VERSION: [number, number, number] = [0, 1, 0];
+
+/** Idle timeouts for the two network calls below. `https` timeouts reset on
+ *  activity, so a slow-but-moving download never trips them. */
+const API_TIMEOUT_MS = 15_000;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+/** Redirect chains are followed at most this many times before giving up. */
+const MAX_REDIRECTS = 5;
 
 /** How often (in ms) to suppress the "update available" prompt after the user
  *  dismisses it.  24 hours keeps it from being annoying.  */
@@ -60,8 +68,14 @@ export async function ensureHelper(
     if (ver && compareVersions(ver, MIN_VERSION) >= 0) {
       managedInfo = { path: managed, version: fmtVersion(ver), managed: true };
     } else {
-      // Stale binary — remove it so a re-download can happen.
-      fs.rmSync(managed, { force: true });
+      // Stale binary — remove it so a re-download can happen. `force` only
+      // ignores ENOENT: a locked file (Windows EBUSY/EPERM) must not abort
+      // activation, so log it and let the download below replace it.
+      try {
+        fs.rmSync(managed, { force: true });
+      } catch (err) {
+        console.warn(`PyPilot: could not remove the stale helper at ${managed}: ${err}`);
+      }
     }
   }
 
@@ -209,7 +223,9 @@ async function downloadLatestHelper(
   const releaseUrl = `https://api.github.com/repos/${HELPER_REPO}/releases/latest`;
 
   const release = await fetchJson<GithubRelease>(releaseUrl);
-  const assetEntry = release.assets.find((a) => a.name === asset.fileName);
+  // A rate-limited or truncated API response has no `assets` array at all;
+  // say so instead of throwing "Cannot read properties of undefined".
+  const assetEntry = (release.assets ?? []).find((a) => a.name === asset.fileName);
   if (!assetEntry) {
     throw new Error(
       `No PyPilot helper asset "${asset.fileName}" found in the latest release.`
@@ -262,7 +278,6 @@ async function probeVersion(
   binPath: string
 ): Promise<[number, number, number] | undefined> {
   try {
-    const { execFileSync } = require('child_process');
     const out = execFileSync(binPath, ['--version'], { encoding: 'utf8', timeout: 5000 });
     return parseVersion(out.trim());
   } catch {
@@ -294,7 +309,6 @@ function compareVersions(
 /** Cross-platform `which`. */
 function which(name: string): string | undefined {
   try {
-    const { execFileSync } = require('child_process');
     const cmd = process.platform === 'win32' ? 'where' : 'which';
     const out = execFileSync(cmd, [name], { encoding: 'utf8', timeout: 3000 });
     const found = out.trim().split(/\r?\n/)[0];
@@ -314,57 +328,152 @@ function which(name: string): string | undefined {
   return undefined;
 }
 
-function fetchJson<T>(url: string): Promise<T> {
+function fetchJson<T>(url: string, redirectsLeft = MAX_REDIRECTS): Promise<T> {
   return new Promise((resolve, reject) => {
-    const options = {
-      headers: {
-        'User-Agent': 'pypilot-vscode',
-        Accept: 'application/vnd.github+json',
+    const request = https.get(
+      url,
+      {
+        headers: {
+          'User-Agent': 'pypilot-vscode',
+          Accept: 'application/vnd.github+json',
+        },
       },
-    };
-    https.get(url, options, (res) => {
-      // Follow redirects (GitHub API can redirect).
-      if (res.statusCode === 301 || res.statusCode === 302) {
-        fetchJson<T>(res.headers.location!).then(resolve, reject);
-        return;
-      }
-      let body = '';
-      res.on('data', (d) => (body += d));
-      res.on('end', () => {
-        try {
-          resolve(JSON.parse(body));
-        } catch (e) {
-          reject(e);
+      (res) => {
+        const status = res.statusCode ?? 0;
+
+        // Follow redirects (the API answers 302, asset URLs 307/308).
+        if (status >= 300 && status < 400 && res.headers.location) {
+          res.resume();
+          request.destroy();
+          if (redirectsLeft <= 0) {
+            reject(new Error(`Too many redirects while requesting ${url}`));
+            return;
+          }
+          fetchJson<T>(new URL(res.headers.location, url).toString(), redirectsLeft - 1).then(
+            resolve,
+            reject
+          );
+          return;
         }
-      });
-    }).on('error', reject);
+
+        // Without this check a 403/404 body is parsed as if it were the
+        // release JSON, and the caller fails much later with a confusing
+        // "Cannot read properties of undefined".
+        if (status < 200 || status >= 300) {
+          res.resume();
+          reject(new Error(httpError(status, url)));
+          return;
+        }
+
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (d) => (body += d));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(body) as T);
+          } catch (e) {
+            reject(new Error(`Could not parse the response from ${url}: ${e}`));
+          }
+        });
+      }
+    );
+
+    request.setTimeout(API_TIMEOUT_MS, () => {
+      request.destroy(new Error(`Request to ${url} timed out after ${API_TIMEOUT_MS}ms`));
+    });
+    request.on('error', reject);
   });
 }
 
-function downloadFile(url: string, dest: string): Promise<void> {
+/** HTTP status → an error a person can act on. Rate limiting is the common
+ *  case: unauthenticated GitHub API calls are capped at 60 per hour. */
+function httpError(status: number, url: string): string {
+  const hint =
+    status === 403 || status === 429 ? ' (GitHub rate limit reached — try again later)' : '';
+  return `Request to ${url} failed with HTTP ${status}${hint}`;
+}
+
+function downloadFile(url: string, dest: string, redirectsLeft = MAX_REDIRECTS): Promise<void> {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
-    const follow = (u: string) =>
-      https.get(u, { headers: { 'User-Agent': 'pypilot-vscode' } }, (res) => {
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          follow(res.headers.location!);
-          return;
-        }
-        res.pipe(file);
-        file.on('finish', () => file.close(() => resolve()));
-      }).on('error', reject);
-    follow(url);
+    let settled = false;
+
+    // Clean up the partial file so a retry starts from scratch.
+    const fail = (err: Error): void => {
+      if (settled) return;
+      settled = true;
+      file.close(() => {
+        fs.rmSync(dest, { force: true });
+        reject(err);
+      });
+    };
+
+    const request = https.get(url, { headers: { 'User-Agent': 'pypilot-vscode' } }, (res) => {
+      const status = res.statusCode ?? 0;
+
+      if (status >= 300 && status < 400 && res.headers.location) {
+        res.resume();
+        file.close(() => {
+          fs.rmSync(dest, { force: true });
+          if (redirectsLeft <= 0) {
+            reject(new Error(`Too many redirects while downloading ${url}`));
+            return;
+          }
+          downloadFile(
+            new URL(res.headers.location, url).toString(),
+            dest,
+            redirectsLeft - 1
+          ).then(resolve, reject);
+        });
+        return;
+      }
+
+      // An error page must never be written to disk as if it were the binary:
+      // extraction would then fail with an unrelated archive error.
+      if (status < 200 || status >= 300) {
+        res.resume();
+        fail(new Error(httpError(status, url)));
+        return;
+      }
+
+      res.pipe(file);
+      file.on('finish', () =>
+        file.close((err) => {
+          if (settled) return;
+          settled = true;
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve();
+        })
+      );
+    });
+
+    request.setTimeout(DOWNLOAD_TIMEOUT_MS, () => {
+      request.destroy(
+        new Error(`Download of ${url} timed out after ${DOWNLOAD_TIMEOUT_MS}ms of inactivity`)
+      );
+    });
+    request.on('error', fail);
+    file.on('error', fail);
   });
 }
 
 async function extractArchive(archive: string, dest: string, fileName: string): Promise<void> {
-  const { execFileSync } = require('child_process');
   if (fileName.endsWith('.zip')) {
     if (process.platform === 'win32') {
-      // PowerShell Expand-Archive (always available on Windows 5+)
+      // PowerShell Expand-Archive (always available on Windows 5+).
+      // -LiteralPath + quoting keeps odd storage paths from breaking the
+      // generated command.
+      const q = (s: string) => s.replace(/'/g, "''");
       execFileSync(
         'powershell.exe',
-        ['-NoProfile', '-Command', `Expand-Archive -Path '${archive}' -DestinationPath '${dest}' -Force`],
+        [
+          '-NoProfile',
+          '-Command',
+          `Expand-Archive -LiteralPath '${q(archive)}' -DestinationPath '${q(dest)}' -Force`,
+        ],
         { timeout: 30000 }
       );
     } else {
@@ -380,7 +489,8 @@ async function extractArchive(archive: string, dest: string, fileName: string): 
 
 interface GithubRelease {
   tag_name: string;
-  assets: GithubAsset[];
+  /** Absent on rate-limited or malformed responses. */
+  assets?: GithubAsset[];
 }
 
 interface GithubAsset {
