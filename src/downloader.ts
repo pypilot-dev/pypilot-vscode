@@ -412,6 +412,8 @@ function downloadFile(url: string, dest: string, redirectsLeft = MAX_REDIRECTS):
       const status = res.statusCode ?? 0;
 
       if (status >= 300 && status < 400 && res.headers.location) {
+        // Captured here: TypeScript drops the narrowing inside the callback.
+        const location = res.headers.location;
         res.resume();
         file.close(() => {
           fs.rmSync(dest, { force: true });
@@ -420,7 +422,7 @@ function downloadFile(url: string, dest: string, redirectsLeft = MAX_REDIRECTS):
             return;
           }
           downloadFile(
-            new URL(res.headers.location, url).toString(),
+            new URL(location, url).toString(),
             dest,
             redirectsLeft - 1
           ).then(resolve, reject);
