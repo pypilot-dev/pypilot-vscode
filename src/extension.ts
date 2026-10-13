@@ -2,7 +2,7 @@
  * extension.ts — PyPilot VS Code extension entry point.
  *
  * Activation:
- *   0. Start `.venv` auto-selection (venv.ts); independent of the helper.
+ *   0. Start `.venv` / pixi environment auto-selection (venv.ts); independent of the helper.
  *   1. Register the status bar item (before the helper lookup, so that a
  *      failed download still leaves an indicator behind).
  *   2. Locate / download the `pypilot` helper binary (downloader.ts).
@@ -33,7 +33,7 @@ let client: LanguageClient | undefined;
 let statusBar: PyPilotStatusBar | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  // ── 0. Project .venv selection ───────────────────────────────────────────
+  // ── 0. Project environment selection (.venv or pixi) ─────────────────────
   // Registered first because it only talks to the Python extensions: it must
   // keep working even if the helper binary cannot be found below.
   registerVenvSelection(context);

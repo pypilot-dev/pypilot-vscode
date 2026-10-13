@@ -1,7 +1,12 @@
 /**
- * venv.ts — point VS Code at the project's `.venv` automatically.
+ * venv.ts — point VS Code at the project's environment automatically.
  *
- * After PyPilot (or uv / pip) creates `<folder>/.venv`, the Python interpreter
+ * The project environment is `<folder>/.venv`, or, in a pixi project (a
+ * `pixi.toml`, or a `pyproject.toml` with `[tool.pixi.workspace]` /
+ * `[tool.pixi.project]`), pixi's default environment `<folder>/.pixi/envs/default`.
+ * pixi projects never get a `.venv` from here.
+ *
+ * After PyPilot (or uv / pip / pixi) creates it, the Python interpreter
  * picker and the Jupyter kernel picker keep using whatever interpreter was
  * active before. Both read the active environment from the Python extensions'
  * APIs, so that is what we set. `python.defaultInterpreterPath` is not an
@@ -24,6 +29,10 @@ const PYTHON_EXTENSION_ID = 'ms-python.python';
 // uv and pip touch pyvenv.cfg several times while the venv is being built, so
 // wait for the writes to settle before asking the extensions to resolve it.
 const DEBOUNCE_MS = 2000;
+
+// `[tool.pixi.workspace]` (current) or `[tool.pixi.project]` (older pixi) at
+// the start of a line. A plain text check is enough to spot pixi projects.
+const PIXI_TABLE = /^[ \t]*\[[ \t]*tool\.pixi\.(?:workspace|project)[ \t]*\]/m;
 
 // ── Local views of the Python Environments API (ms-python.vscode-python-envs) ─
 
@@ -69,14 +78,41 @@ function log(msg: string): void {
   console.log(`PyPilot [venv]: ${msg}`);
 }
 
-function venvDir(folder: vscode.WorkspaceFolder): string {
-  return path.join(folder.uri.fsPath, '.venv');
+type EnvKind = 'venv' | 'pixi';
+
+/** The environment PyPilot treats as "the project's" for a folder. */
+interface ProjectEnv {
+  readonly kind: EnvKind;
+  /** Environment root: the venv folder or the conda-style pixi prefix. */
+  readonly dir: string;
+  /** Interpreter inside `dir`; may not exist yet. */
+  readonly python: string;
 }
 
-function venvPython(folder: vscode.WorkspaceFolder): string {
-  return process.platform === 'win32'
-    ? path.join(venvDir(folder), 'Scripts', 'python.exe')
-    : path.join(venvDir(folder), 'bin', 'python');
+/** True for a pixi project: `pixi.toml`, or pixi tables in `pyproject.toml`. */
+function isPixiProject(folder: vscode.WorkspaceFolder): boolean {
+  const root = folder.uri.fsPath;
+  try {
+    if (fs.existsSync(path.join(root, 'pixi.toml'))) return true;
+    return PIXI_TABLE.test(fs.readFileSync(path.join(root, 'pyproject.toml'), 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
+function projectEnv(folder: vscode.WorkspaceFolder): ProjectEnv {
+  const win = process.platform === 'win32';
+  if (isPixiProject(folder)) {
+    // Conda layout: on Windows python.exe sits in the prefix root.
+    const dir = path.join(folder.uri.fsPath, '.pixi', 'envs', 'default');
+    return { kind: 'pixi', dir, python: win ? path.join(dir, 'python.exe') : path.join(dir, 'bin', 'python') };
+  }
+  const dir = path.join(folder.uri.fsPath, '.venv');
+  return {
+    kind: 'venv',
+    dir,
+    python: win ? path.join(dir, 'Scripts', 'python.exe') : path.join(dir, 'bin', 'python'),
+  };
 }
 
 function normalize(p: string): string {
@@ -153,14 +189,28 @@ async function activeEnvPaths(
 }
 
 /** Read "X.Y" from pyvenv.cfg (`version` for venv, `version_info` for uv). */
-function cfgVersion(folder: vscode.WorkspaceFolder): string | undefined {
+function cfgVersion(dir: string): string | undefined {
   try {
-    const text = fs.readFileSync(path.join(venvDir(folder), 'pyvenv.cfg'), 'utf8');
+    const text = fs.readFileSync(path.join(dir, 'pyvenv.cfg'), 'utf8');
     const m = /^\s*version(?:_info)?\s*=\s*(\d+)\.(\d+)/m.exec(text);
     return m ? `${m[1]}.${m[2]}` : undefined;
   } catch {
     return undefined;
   }
+}
+
+/** Read "X.Y" from the `python-X.Y.Z-<build>.json` record in conda-meta. */
+function condaMetaVersion(dir: string): string | undefined {
+  try {
+    for (const name of fs.readdirSync(path.join(dir, 'conda-meta'))) {
+      // Digits right after "python-" skip python-dateutil, python_abi etc.
+      const m = /^python-(\d+)\.(\d+)\.[^-]*-.*\.json$/.exec(name);
+      if (m) return `${m[1]}.${m[2]}`;
+    }
+  } catch {
+    // Not installed yet, or unreadable.
+  }
+  return undefined;
 }
 
 function majorMinor(version: string | undefined): string | undefined {
@@ -169,24 +219,26 @@ function majorMinor(version: string | undefined): string | undefined {
 }
 
 async function selectVenv(folder: vscode.WorkspaceFolder, reason: VenvReason): Promise<VenvResult> {
-  const pythonPath = venvPython(folder);
+  const target = projectEnv(folder);
+  const pythonPath = target.python;
+  const name = target.kind === 'pixi' ? 'the pixi environment' : '.venv';
   if (!fs.existsSync(pythonPath)) return 'missing';
 
   const envs = await getEnvsApi();
-  const py = envs ? undefined : await getPyApi();
+  let py = envs ? undefined : await getPyApi();
   if (!envs && !py) {
     log(`no Python extension API available; leaving ${folder.name} alone`);
     return 'unavailable';
   }
 
-  const dir = venvDir(folder);
+  const dir = target.dir;
   const current = await activeEnvPaths(folder, envs, py);
   if (current.some((p) => isWithin(p, dir))) return 'unchanged';
 
   // On activation only fill a gap: if the user deliberately picked another
   // interpreter inside this folder, respect it.
   if (reason === 'activation' && current.some((p) => isWithin(p, folder.uri.fsPath))) {
-    log(`${folder.name} already uses an interpreter inside the folder; not switching to .venv`);
+    log(`${folder.name} already uses an interpreter inside the folder; not switching to ${name}`);
     return 'unchanged';
   }
 
@@ -197,13 +249,21 @@ async function selectVenv(folder: vscode.WorkspaceFolder, reason: VenvReason): P
       // Python extension (and so the Jupyter kernel picker) defers to it.
       await envs.refreshEnvironments?.(folder.uri);
       const env = await envs.resolveEnvironment!(vscode.Uri.file(pythonPath));
-      if (!env) {
+      if (env) {
+        await envs.setEnvironment!(folder.uri, env);
+        version = majorMinor(env.version);
+      } else if (target.kind === 'pixi') {
+        // Python Environments has no pixi manager yet and may not know the
+        // prefix; the Python extension's own discovery finds `.pixi` envs.
+        log(`Python Environments could not resolve ${pythonPath}; trying the Python extension`);
+        py = await getPyApi();
+        if (!py) return 'unavailable';
+      } else {
         log(`Python Environments could not resolve ${pythonPath}`);
         return 'unavailable';
       }
-      await envs.setEnvironment!(folder.uri, env);
-      version = majorMinor(env.version);
-    } else if (py) {
+    }
+    if (py) {
       // Without a refresh the new venv may not be known yet and the kernel
       // picker would not list it.
       await py.refreshEnvironments?.({ forceRefresh: true });
@@ -217,18 +277,23 @@ async function selectVenv(folder: vscode.WorkspaceFolder, reason: VenvReason): P
     return 'unavailable';
   }
 
-  version = version ?? cfgVersion(folder);
+  version = version ?? (target.kind === 'pixi' ? condaMetaVersion(dir) : cfgVersion(dir));
   log(`${folder.name}: selected ${pythonPath} (${reason})`);
+  const suffix = version ? ` (Python ${version})` : '';
   vscode.window.showInformationMessage(
-    `PyPilot: this workspace now uses .venv${version ? ` (Python ${version})` : ''}. ` +
-      "Notebooks: pick '.venv' in the kernel picker if one is already open."
+    target.kind === 'pixi'
+      ? `PyPilot: this workspace now uses the pixi environment${suffix}. ` +
+          "Notebooks: pick the pixi 'default' environment in the kernel picker if one is already open."
+      : `PyPilot: this workspace now uses .venv${suffix}. ` +
+          "Notebooks: pick '.venv' in the kernel picker if one is already open."
   );
   return 'changed';
 }
 
 /**
- * Make `<folder>/.venv` the active interpreter for `folder`, if it exists and
- * is not already active. Never throws.
+ * Make the folder's project environment (`.venv`, or pixi's default
+ * environment in a pixi project) the active interpreter for `folder`, if it
+ * exists and is not already active. Never throws.
  */
 export function useProjectVenv(folder: vscode.WorkspaceFolder, reason: VenvReason): Promise<VenvResult> {
   const key = folder.uri.toString();
@@ -312,13 +377,15 @@ export function registerVenvSelection(context: vscode.ExtensionContext): void {
       const results = await Promise.all(folders.map((f) => useProjectVenv(f, 'command')));
       if (results.includes('changed')) return; // selectVenv already said so.
       if (results.every((r) => r === 'missing')) {
-        vscode.window.showInformationMessage('PyPilot: no .venv found in this workspace.');
+        vscode.window.showInformationMessage(
+          'PyPilot: no .venv or installed pixi environment found in this workspace (pixi projects: run "pixi install").'
+        );
       } else if (results.includes('unavailable')) {
         vscode.window.showInformationMessage(
-          'PyPilot: could not select .venv. Install or enable the Python extension, or pick it with "Python: Select Interpreter".'
+          'PyPilot: could not select the project environment. Install or enable the Python extension, or pick it with "Python: Select Interpreter".'
         );
       } else {
-        vscode.window.showInformationMessage('PyPilot: .venv is already the active interpreter.');
+        vscode.window.showInformationMessage('PyPilot: the project environment is already the active interpreter.');
       }
     })
   );
