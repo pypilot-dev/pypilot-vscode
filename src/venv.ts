@@ -313,36 +313,45 @@ function autoSelectEnabled(folder: vscode.WorkspaceFolder): boolean {
   return vscode.workspace.getConfiguration('pypilot', folder.uri).get<boolean>('autoSelectVenv', true);
 }
 
-/** Watch `<folder>/.venv/pyvenv.cfg` and select the venv once it settles. */
+/**
+ * Watch `<folder>/.venv/pyvenv.cfg` and, for pixi, the default environment's
+ * `conda-meta/history` (written by every `pixi install`), and select the
+ * project environment once the writes settle.
+ */
 function watchFolder(folder: vscode.WorkspaceFolder): vscode.Disposable {
-  // RelativePattern keeps the match inside this folder, so a `.venv` elsewhere
-  // on disk never triggers anything.
-  const watcher = vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(folder, '.venv/pyvenv.cfg'),
-    false,
-    false,
-    true
-  );
+  // RelativePattern keeps the match inside this folder, so an environment
+  // elsewhere on disk never triggers anything.
+  const watch = (glob: string) =>
+    vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, glob), false, false, true);
+  const watchers = [
+    { kind: 'venv' as EnvKind, watcher: watch('.venv/pyvenv.cfg') },
+    { kind: 'pixi' as EnvKind, watcher: watch('.pixi/envs/default/conda-meta/history') },
+  ];
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const schedule = () => {
+  const schedule = (kind: EnvKind) => () => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = undefined;
+      // Only react to the environment this folder actually uses: a stray
+      // `.venv` in a pixi project (or `.pixi` elsewhere) is ignored.
+      if (projectEnv(folder).kind !== kind) return;
       if (autoSelectEnabled(folder)) void useProjectVenv(folder, 'watcher');
     }, DEBOUNCE_MS);
   };
-  watcher.onDidCreate(schedule);
-  watcher.onDidChange(schedule);
+  for (const { kind, watcher } of watchers) {
+    watcher.onDidCreate(schedule(kind));
+    watcher.onDidChange(schedule(kind));
+  }
   return {
     dispose: () => {
       if (timer) clearTimeout(timer);
-      watcher.dispose();
+      watchers.forEach(({ watcher }) => watcher.dispose());
     },
   };
 }
 
 /**
- * Register the `.venv` watchers, the one-off activation check and the
+ * Register the `.venv` / pixi watchers, the one-off activation check and the
  * `pypilot.useProjectVenv` command.
  */
 export function registerVenvSelection(context: vscode.ExtensionContext): void {
