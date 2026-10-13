@@ -2,7 +2,7 @@
   "name": "pypilot-vscode",
   "displayName": "PyPilot",
   "description": "Sets up Python environments, resolves version and hardware compatibility without external AI or API keys.",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "license": "Apache-2.0",
   "publisher": "AbdullahMasood-005",
   "engines": {
