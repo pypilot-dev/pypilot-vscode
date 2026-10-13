@@ -58,7 +58,7 @@ This extension runs the same native Rust engine as [PyPilot for Zed](https://git
 | `PyPilot: Open Environment Report Panel` | Runs the health check and opens the environment report |
 | `PyPilot: Install uv Globally` | Installs `uv` so it is available outside this workspace |
 | `PyPilot: Check for Helper Updates` | Compares the installed helper against the latest GitHub release |
-| `PyPilot: Use Project .venv` | Makes the workspace's `.venv` the active Python interpreter |
+| `PyPilot: Use Project Environment (.venv / pixi)` | Makes the workspace's `.venv` (or pixi default environment) the active Python interpreter |
 
 ## Settings
 
@@ -67,7 +67,7 @@ This extension runs the same native Rust engine as [PyPilot for Zed](https://git
 | `pypilot.packageManager` | `"auto"` | `auto` (use `uv` when it is installed, offer to install it, otherwise fall back to `pip`), `uv` project mode, `uv-pip`, or `pip`. |
 | `pypilot.notifications` | `"problems-only"` | Configures notification verbosity: `all`, `problems-only`, or `off`. |
 | `pypilot.autoCheckOnOpen` | `true` | Automatically checks the environment when opening a workspace. |
-| `pypilot.autoSelectVenv` | `true` | Makes the workspace's `.venv` the active Python interpreter when it is created or changed, and on startup when no interpreter inside the workspace is selected. |
+| `pypilot.autoSelectVenv` | `true` | Makes the workspace's `.venv` the active Python interpreter when it is created or changed, and on startup when no interpreter inside the workspace is selected. pixi projects (`pixi.toml`, or `[tool.pixi.workspace]` in `pyproject.toml`) are supported: their default environment (`.pixi/envs/default`) is selected after `pixi install`, and no `.venv` is used. |
 | `pypilot.dataRefreshDays` | `7` | Refresh interval in days for compatibility data tables (0 disables updates). |
 
 ## Architecture
@@ -82,7 +82,7 @@ pypilot-vscode/
 │   ├── statusBar.ts        Editor status bar indicator
 │   ├── commands.ts         Command palette actions
 │   ├── tasks.ts            Workspace task provider
-│   ├── venv.ts             .venv auto-selection via the Python extension APIs
+│   ├── venv.ts             .venv / pixi env auto-selection via the Python extension APIs
 │   └── webview/
 │       └── reportPanel.ts  Interactive HTML doctor report webview
 ├── build.ts                Bun build script
