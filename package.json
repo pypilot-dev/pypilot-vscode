@@ -98,7 +98,7 @@
       },
       {
         "command": "pypilot.useProjectVenv",
-        "title": "PyPilot: Use Project .venv",
+        "title": "PyPilot: Use Project Environment (.venv / pixi)",
         "icon": "$(symbol-namespace)"
       }
     ],
@@ -139,7 +139,7 @@
         "pypilot.autoSelectVenv": {
           "type": "boolean",
           "default": true,
-          "description": "Make the workspace's .venv the active Python interpreter (and so the recommended notebook kernel) when it is created or changed, and on startup when no interpreter inside the workspace is selected. Requires the Python extension. The \"PyPilot: Use Project .venv\" command works regardless of this setting.",
+          "description": "Make the workspace's .venv (in pixi projects: the pixi default environment, .pixi/envs/default) the active Python interpreter (and so the recommended notebook kernel) when it is created or changed, and on startup when no interpreter inside the workspace is selected. Requires the Python extension. The \"PyPilot: Use Project Environment\" command works regardless of this setting.",
           "scope": "resource"
         },
         "pypilot.dataRefreshDays": {
