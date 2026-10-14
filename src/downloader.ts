@@ -21,6 +21,8 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
+import { installHelper, removeRetired } from './helperInstall';
+
 const HELPER_REPO = 'pypilot-dev/pypilot';
 const MIN_VERSION: [number, number, number] = [0, 1, 0];
 
@@ -48,6 +50,10 @@ export interface HelperInfo {
 export async function ensureHelper(
   context: vscode.ExtensionContext
 ): Promise<HelperInfo> {
+  // A helper replaced by an update stays on disk while the old language server
+  // runs it; delete such leftovers now that nothing should be using them.
+  removeRetired(path.join(context.globalStorageUri.fsPath, 'bin'), helperBinName());
+
   // Probe both PATH and managed locations, then pick the best one.
   let pathInfo: HelperInfo | undefined;
   let managedInfo: HelperInfo | undefined;
@@ -158,37 +164,40 @@ export async function checkForHelperUpdate(
   );
 
   if (choice === 'Update now') {
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: 'PyPilot',
-        cancellable: false,
-      },
-      async (progress) => {
-        progress.report({ message: `Updating helper to v${remoteStr}…` });
+    try {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'PyPilot',
+          cancellable: false,
+        },
+        async (progress) => {
+          progress.report({ message: `Updating helper to v${remoteStr}…` });
 
-        if (current.managed) {
-          // Replace the managed binary in-place.
+          // Always into managed storage: a PATH install is the user's to
+          // manage, and on the next activation the newer copy wins.
           const binPath = await downloadLatestHelper(context);
+
+          // Only report success once the binary on disk really is the new
+          // version. A replace that silently failed used to say "updated",
+          // and the same prompt came back after every reload.
           const ver = await probeVersion(binPath);
+          if (!ver || compareVersions(ver, remoteVer) < 0) {
+            throw new Error(
+              `the helper at ${binPath} still reports ${ver ? fmtVersion(ver) : 'no version'} after installing v${remoteStr}`
+            );
+          }
           vscode.window.showInformationMessage(
-            `PyPilot: helper updated to v${ver ? fmtVersion(ver) : remoteStr}. Reload the window to use the new version.`
-          );
-        } else {
-          // PATH binary — download a managed copy instead of touching the
-          // user's system install.  On next activation the managed copy
-          // (which is newer) should win the version comparison, but since
-          // PATH is checked first and it's still old, we need to update the
-          // managed copy and tell the user to reload.
-          const binPath = await downloadLatestHelper(context);
-          const ver = await probeVersion(binPath);
-          vscode.window.showInformationMessage(
-            `PyPilot: downloaded v${ver ? fmtVersion(ver) : remoteStr} to managed storage. ` +
-            `Your PATH binary (${current.path}) was not modified. Reload the window to pick up the update.`
+            current.managed
+              ? `PyPilot: helper updated to v${fmtVersion(ver)}.`
+              : `PyPilot: downloaded v${fmtVersion(ver)} to managed storage. Your PATH binary (${current.path}) was not modified.`
           );
         }
-      }
-    );
+      );
+    } catch (err) {
+      vscode.window.showErrorMessage(`PyPilot: helper update failed: ${err}`);
+      return;
+    }
 
     // Prompt to reload so the LSP restarts with the new binary.
     const reload = await vscode.window.showInformationMessage(
@@ -210,10 +219,12 @@ export async function checkForHelperUpdate(
 
 // --- internals ---------------------------------------------------------------
 
+function helperBinName(): string {
+  return process.platform === 'win32' ? 'pypilot.exe' : 'pypilot';
+}
+
 function managedBinPath(context: vscode.ExtensionContext): string | undefined {
-  const dir = context.globalStorageUri.fsPath;
-  const name = process.platform === 'win32' ? 'pypilot.exe' : 'pypilot';
-  return path.join(dir, 'bin', name);
+  return path.join(context.globalStorageUri.fsPath, 'bin', helperBinName());
 }
 
 async function downloadLatestHelper(
@@ -237,18 +248,13 @@ async function downloadLatestHelper(
 
   const archive = path.join(dir, asset.fileName);
   await downloadFile(assetEntry.browser_download_url, archive);
-
-  const binName = process.platform === 'win32' ? 'pypilot.exe' : 'pypilot';
-  const binPath = path.join(dir, binName);
-
-  await extractArchive(archive, dir, asset.fileName);
-  fs.rmSync(archive, { force: true });
-
-  if (process.platform !== 'win32') {
-    fs.chmodSync(binPath, 0o755);
+  try {
+    // Never unpacks over the current binary: that is usually the one the
+    // language server is running, which Windows will not let us replace.
+    return installHelper(archive, asset.fileName, dir, helperBinName());
+  } finally {
+    fs.rmSync(archive, { force: true });
   }
-
-  return binPath;
 }
 
 function assetForPlatform(): { fileName: string } {
@@ -462,30 +468,6 @@ function downloadFile(url: string, dest: string, redirectsLeft = MAX_REDIRECTS):
   });
 }
 
-async function extractArchive(archive: string, dest: string, fileName: string): Promise<void> {
-  if (fileName.endsWith('.zip')) {
-    if (process.platform === 'win32') {
-      // PowerShell Expand-Archive (always available on Windows 5+).
-      // -LiteralPath + quoting keeps odd storage paths from breaking the
-      // generated command.
-      const q = (s: string) => s.replace(/'/g, "''");
-      execFileSync(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-Command',
-          `Expand-Archive -LiteralPath '${q(archive)}' -DestinationPath '${q(dest)}' -Force`,
-        ],
-        { timeout: 30000 }
-      );
-    } else {
-      execFileSync('unzip', ['-o', archive, '-d', dest], { timeout: 30000 });
-    }
-  } else {
-    // .tar.gz — available on Linux/macOS; also on Windows via Git Bash / WSL
-    execFileSync('tar', ['-xzf', archive, '-C', dest], { timeout: 30000 });
-  }
-}
 
 // --- GitHub API types --------------------------------------------------------
 
