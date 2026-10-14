@@ -164,8 +164,9 @@ export async function checkForHelperUpdate(
   );
 
   if (choice === 'Update now') {
+    let done: string;
     try {
-      await vscode.window.withProgress(
+      done = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
           title: 'PyPilot',
@@ -187,11 +188,9 @@ export async function checkForHelperUpdate(
               `the helper at ${binPath} still reports ${ver ? fmtVersion(ver) : 'no version'} after installing v${remoteStr}`
             );
           }
-          vscode.window.showInformationMessage(
-            current.managed
-              ? `PyPilot: helper updated to v${fmtVersion(ver)}.`
-              : `PyPilot: downloaded v${fmtVersion(ver)} to managed storage. Your PATH binary (${current.path}) was not modified.`
-          );
+          return current.managed
+            ? `PyPilot: helper updated to v${fmtVersion(ver)}.`
+            : `PyPilot: helper v${fmtVersion(ver)} installed in the extension's storage; your PATH copy (${current.path}) was left as is.`;
         }
       );
     } catch (err) {
@@ -199,9 +198,10 @@ export async function checkForHelperUpdate(
       return;
     }
 
-    // Prompt to reload so the LSP restarts with the new binary.
+    // One notification: what happened, and the reload that restarts the
+    // language server on the new binary.
     const reload = await vscode.window.showInformationMessage(
-      'PyPilot: Reload window to use the updated helper?',
+      `${done} Reload the window to start using it.`,
       'Reload'
     );
     if (reload === 'Reload') {
