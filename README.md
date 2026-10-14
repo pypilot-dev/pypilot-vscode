@@ -41,7 +41,7 @@ This extension runs the same native Rust engine as [PyPilot for Zed](https://git
 1. Open a Python project directory in VS Code.
 2. PyPilot activates and scans the environment.
 3. If an issue is found, a prompt appears with options to run the automatic fix or inspect the report.
-4. The environment is configured on the Python version supported by your project dependencies.
+4. The environment is configured for the Python version supported by your project dependencies.
 
 ## Commands
 
