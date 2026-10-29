@@ -28,7 +28,7 @@ import { registerCommands } from "./commands";
 import { PyPilotTaskProvider } from "./tasks";
 import { ReportPanel } from "./webview/reportPanel";
 import { pixiEnvName, registerVenvSelection } from "./venv";
-import { registerContextKeys } from "./project";
+import { diagnosticsScope, registerContextKeys } from "./project";
 
 let client: LanguageClient | undefined;
 let statusBar: PyPilotStatusBar | undefined;
@@ -90,11 +90,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       { scheme: "file", pattern: "**/pyproject.toml" },
       { scheme: "file", pattern: "**/environment.yml" },
     ],
-    // The pixi environment the server should use (the same one venv.ts
-    // selects as the interpreter). The server reads it from here at startup;
-    // later changes arrive through `configurationSection` below.
+    // Settings the server needs before its first scan: the pixi environment
+    // (the same one venv.ts selects as the interpreter) and which files get
+    // diagnostics. Later changes arrive through `configurationSection` below
+    // as `settings.pypilot.<key>`.
     initializationOptions: {
       pixiEnvironment: pixiEnvName(vscode.workspace.workspaceFolders?.[0]),
+      diagnosticsScope: diagnosticsScope(vscode.workspace.workspaceFolders?.[0]),
     },
     synchronize: {
       // Sends workspace/didChangeConfiguration with `{ settings: { pypilot:

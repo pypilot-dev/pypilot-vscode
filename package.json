@@ -182,6 +182,17 @@
           "markdownDescription": "Which pixi environment PyPilot and the interpreter selection use in multi-environment pixi projects (the `[environments]` table of `pixi.toml`). The interpreter is `.pixi/envs/<name>`; install it with `pixi install -e <name>`. Ignored outside pixi projects.",
           "scope": "resource"
         },
+        "pypilot.diagnosticsScope": {
+          "type": "string",
+          "enum": ["openFiles", "workspace"],
+          "enumDescriptions": [
+            "Check imports only in files that are open in the editor (default).",
+            "Also scan every Python file in the workspace in the background, so the Problems panel lists import problems in files that are not open. Needs a helper that supports it; older helpers keep checking open files only."
+          ],
+          "default": "openFiles",
+          "description": "Which files PyPilot reports import diagnostics for.",
+          "scope": "resource"
+        },
         "pypilot.dataRefreshDays": {
           "type": "number",
           "default": 7,

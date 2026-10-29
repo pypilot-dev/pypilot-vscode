@@ -139,6 +139,16 @@ export function resolvePackageManager(folder: vscode.WorkspaceFolder): { manager
   }
 }
 
+export type DiagnosticsScope = 'openFiles' | 'workspace';
+
+/** `pypilot.diagnosticsScope` for `folder`; anything unknown means `openFiles`. */
+export function diagnosticsScope(folder: vscode.WorkspaceFolder | undefined): DiagnosticsScope {
+  const raw = vscode.workspace
+    .getConfiguration('pypilot', folder?.uri)
+    .get<string>('diagnosticsScope', 'openFiles');
+  return raw === 'workspace' ? 'workspace' : 'openFiles';
+}
+
 /** Compute every context key from scratch; each is a handful of stat/read calls. */
 function updateContextKeys(): void {
   const folders = vscode.workspace.workspaceFolders ?? [];
