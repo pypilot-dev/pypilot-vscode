@@ -113,6 +113,26 @@
         "icon": "$(symbol-namespace)"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "pypilot.fixCuda",
+          "when": "pypilot.hasTorch"
+        },
+        {
+          "command": "pypilot.migrateConda",
+          "when": "pypilot.hasCondaEnv"
+        },
+        {
+          "command": "pypilot.initPixiProject",
+          "when": "pypilot.hasNonPixiProject"
+        },
+        {
+          "command": "pypilot.installPixiCli",
+          "when": "!pypilot.pixiInstalled"
+        }
+      ]
+    },
     "configuration": {
       "title": "PyPilot",
       "properties": {

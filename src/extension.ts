@@ -28,6 +28,7 @@ import { registerCommands } from "./commands";
 import { PyPilotTaskProvider } from "./tasks";
 import { ReportPanel } from "./webview/reportPanel";
 import { pixiEnvName, registerVenvSelection } from "./venv";
+import { registerContextKeys } from "./project";
 
 let client: LanguageClient | undefined;
 let statusBar: PyPilotStatusBar | undefined;
@@ -37,6 +38,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Registered first because it only talks to the Python extensions: it must
   // keep working even if the helper binary cannot be found below.
   registerVenvSelection(context);
+  // Context keys behind the palette's `when` clauses: plain file checks.
+  registerContextKeys(context);
 
   // ── 1. Status bar ─────────────────────────────────────────────────────────
   // Created before the helper lookup so that a failed download still leaves a
