@@ -93,6 +93,11 @@
         "icon": "$(cloud-download)"
       },
       {
+        "command": "pypilot.installPixiCli",
+        "title": "PyPilot: Install pixi",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "pypilot.updateHelper",
         "title": "PyPilot: Check for Helper Updates",
         "icon": "$(sync)"

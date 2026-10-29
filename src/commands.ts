@@ -14,6 +14,7 @@ import * as vscode from "vscode";
 import {
   LanguageClient,
   ExecuteCommandRequest,
+  State,
 } from "vscode-languageclient/node";
 import { PyPilotStatusBar } from "./statusBar";
 import { checkForHelperUpdate, ensureHelper } from "./downloader";
@@ -24,6 +25,33 @@ const CMD_DETAILS = "pypilot.showDetails";
 const CMD_INSTALL = "pypilot.installPackage";
 const CMD_RECREATE = "pypilot.recreateWithPython";
 const CMD_INSTALL_UV = "pypilot.installUvGlobally";
+const CMD_INSTALL_PIXI = "pypilot.installPixi";
+
+// vscode-languageclient registers every command the server lists in
+// executeCommandProvider under its own id, and registering an id twice
+// throws. So palette commands never reuse a server id: "PyPilot: Install uv
+// Globally" is `pypilot.installUv` -> server `pypilot.installUvGlobally`, and
+// "PyPilot: Install pixi" is `pypilot.installPixiCli` -> server
+// `pypilot.installPixi`.
+
+/** pixi's official installers (https://pixi.sh). */
+const PIXI_INSTALL_WINDOWS =
+  'powershell -ExecutionPolicy Bypass -c "irm -useb https://pixi.sh/install.ps1 | iex"';
+const PIXI_INSTALL_UNIX = "curl -fsSL https://pixi.sh/install.sh | sh";
+
+/**
+ * True if the server advertises `command` (older helpers lack new ones).
+ * Waits for a client that is still starting: its capabilities are only
+ * known once `initialize` has returned.
+ */
+export async function serverSupports(client: LanguageClient, command: string): Promise<boolean> {
+  if (client.state === State.Starting) {
+    // start() returns the pending start promise when already starting (and
+    // is never called here on a stopped client, which would restart it).
+    await client.start().catch(() => undefined);
+  }
+  return client.initializeResult?.capabilities.executeCommandProvider?.commands.includes(command) ?? false;
+}
 
 /**
  * Run a server command that changes the environment and report whether it
@@ -303,6 +331,54 @@ export function registerCommands(
         } catch (err) {
           statusBar.setStatus("idle");
           vscode.window.showErrorMessage(`PyPilot: uv install failed. ${err}`);
+        }
+      }
+    );
+  });
+
+  // ── pypilot.installPixiCli ────────────────────────────────────────────────
+  // Same shape as installUv: the server runs pixi's installer and reports
+  // the outcome itself. A helper too old to know the command gets the
+  // official installer in a terminal instead, after asking.
+  r("pypilot.installPixiCli", async () => {
+    if (!(await serverSupports(client, CMD_INSTALL_PIXI))) {
+      const script = process.platform === "win32" ? PIXI_INSTALL_WINDOWS : PIXI_INSTALL_UNIX;
+      const answer = await vscode.window.showInformationMessage(
+        "PyPilot: this helper cannot install pixi itself. Run pixi's official installer in a terminal?",
+        { modal: true, detail: script },
+        "Run installer"
+      );
+      if (answer !== "Run installer") return;
+      const task = new vscode.Task(
+        { type: "shell" },
+        vscode.TaskScope.Workspace,
+        "install pixi",
+        "PyPilot",
+        new vscode.ShellExecution(script)
+      );
+      try {
+        await vscode.tasks.executeTask(task);
+      } catch (err) {
+        vscode.window.showErrorMessage(`PyPilot: pixi install failed. ${err}`);
+      }
+      return;
+    }
+
+    statusBar.setStatus("checking");
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "PyPilot",
+        cancellable: false,
+      },
+      async (progress) => {
+        progress.report({ message: "Installing pixi…" });
+        try {
+          const ok = await runServerCommand(client, CMD_INSTALL_PIXI);
+          statusBar.setStatus(ok ? "ok" : "idle");
+        } catch (err) {
+          statusBar.setStatus("idle");
+          vscode.window.showErrorMessage(`PyPilot: pixi install failed. ${err}`);
         }
       }
     );
