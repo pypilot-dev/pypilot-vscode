@@ -253,7 +253,8 @@
     "watch": "bun run build.ts --watch",
     "lint": "bunx @biomejs/biome check src",
     "package": "bun run build --production && bunx @vscode/vsce package --no-dependencies",
-    "test": "bun test"
+    "test": "bun test",
+    "e2e": "bun run build && bun e2e/run.ts"
   },
   "devDependencies": {
     "@types/bun": "1.4.3",

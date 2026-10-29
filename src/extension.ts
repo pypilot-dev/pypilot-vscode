@@ -22,7 +22,7 @@ import {
   ServerOptions,
 } from "vscode-languageclient/node";
 
-import { ensureHelper, checkForHelperUpdate } from "./downloader";
+import { ensureHelper, checkForHelperUpdate, installEngineVersion, type HelperInfo } from "./downloader";
 import { PyPilotStatusBar } from "./statusBar";
 import { registerCommands } from "./commands";
 import { PyPilotTaskProvider } from "./tasks";
@@ -32,7 +32,23 @@ import { pixiEnvName, registerVenvSelection } from "./venv";
 let client: LanguageClient | undefined;
 let statusBar: PyPilotStatusBar | undefined;
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+/** What `activate` returns when VS Code runs the extension's tests
+ *  (`ExtensionMode.Test`, see e2e/); nothing in normal use. */
+export interface PyPilotTestApi {
+  helper(): HelperInfo | undefined;
+  installEngineVersion(version: string, binDir: string): Promise<string>;
+}
+
+export async function activate(context: vscode.ExtensionContext): Promise<PyPilotTestApi | undefined> {
+  let helperInfo: HelperInfo | undefined;
+  const testApi: PyPilotTestApi | undefined =
+    context.extensionMode === vscode.ExtensionMode.Test
+      ? {
+          helper: () => helperInfo,
+          installEngineVersion: (version, binDir) => installEngineVersion(context, version, binDir),
+        }
+      : undefined;
+
   // ── 0. Project environment selection (.venv or pixi) ─────────────────────
   // Registered first because it only talks to the Python extensions: it must
   // keep working even if the helper binary cannot be found below.
@@ -52,7 +68,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const log = (line: string) => output.appendLine(`[engine] ${line}`);
 
   let helperPath: string;
-  let helperInfo: Awaited<ReturnType<typeof ensureHelper>> | undefined;
   try {
     helperInfo = await ensureHelper(context, log);
     helperPath = helperInfo.path;
@@ -64,7 +79,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       `PyPilot: could not locate the helper binary. ${err}\n` +
         "Install `pypilot` manually and ensure it is on your PATH, or check your internet connection."
     );
-    return;
+    return testApi;
   }
 
   // ── 2b. Background update check (non-blocking) ───────────────────────────
@@ -153,6 +168,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
     }, 3000);
   }
+
+  return testApi;
 }
 
 export async function deactivate(): Promise<void> {
