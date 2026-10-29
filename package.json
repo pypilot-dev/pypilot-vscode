@@ -98,6 +98,11 @@
         "icon": "$(cloud-download)"
       },
       {
+        "command": "pypilot.initPixiProject",
+        "title": "PyPilot: Initialize pixi project",
+        "icon": "$(new-file)"
+      },
+      {
         "command": "pypilot.updateHelper",
         "title": "PyPilot: Check for Helper Updates",
         "icon": "$(sync)"

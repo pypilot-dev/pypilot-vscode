@@ -10,6 +10,7 @@
  * so the user never has to touch a terminal.
  */
 
+import * as path from "path";
 import * as vscode from "vscode";
 import {
   LanguageClient,
@@ -26,6 +27,23 @@ const CMD_INSTALL = "pypilot.installPackage";
 const CMD_RECREATE = "pypilot.recreateWithPython";
 const CMD_INSTALL_UV = "pypilot.installUvGlobally";
 const CMD_INSTALL_PIXI = "pypilot.installPixi";
+const CMD_MIGRATE_PIXI = "pypilot.migrateToPixi";
+
+/** Argument of `pypilot.migrateToPixi`; omitted fields mean false (dry run). */
+interface MigrateToPixiArgs {
+  write?: boolean;
+  install?: boolean;
+}
+
+/** Result of `pypilot.migrateToPixi`. */
+interface MigrateToPixiResult {
+  /** What would be (or was) written, as text for the user. */
+  preview?: string;
+  /** Paths written, absolute or relative to the project root; only with write. */
+  written?: string[];
+  /** Same contract as the other environment commands: false = failed. */
+  ok?: boolean;
+}
 
 // vscode-languageclient registers every command the server lists in
 // executeCommandProvider under its own id, and registering an id twice
@@ -379,6 +397,99 @@ export function registerCommands(
         } catch (err) {
           statusBar.setStatus("idle");
           vscode.window.showErrorMessage(`PyPilot: pixi install failed. ${err}`);
+        }
+      }
+    );
+  });
+
+  // ── pypilot.initPixiProject ───────────────────────────────────────────────
+  // The server's migration is a dry run unless asked to write: show its
+  // preview first, then write (and optionally install) only on confirmation.
+  // The engine's own finding fix calls pypilot.migrateToPixi directly; the
+  // language client handles that without any code here.
+  r("pypilot.initPixiProject", async () => {
+    if (!(await serverSupports(client, CMD_MIGRATE_PIXI))) {
+      const answer = await vscode.window.showInformationMessage(
+        "PyPilot: this helper cannot initialize pixi projects yet. Update it with \"PyPilot: Check for Helper Updates\".",
+        "Check for updates"
+      );
+      if (answer) await vscode.commands.executeCommand("pypilot.updateHelper");
+      return;
+    }
+
+    const migrate = (args: MigrateToPixiArgs) =>
+      client.sendRequest(ExecuteCommandRequest.type, {
+        command: CMD_MIGRATE_PIXI,
+        arguments: [args],
+      }) as Promise<MigrateToPixiResult | null>;
+
+    let preview: string | undefined;
+    try {
+      preview = (
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: "PyPilot", cancellable: false },
+          async (progress) => {
+            progress.report({ message: "Preparing the pixi migration…" });
+            return migrate({ write: false });
+          }
+        )
+      )?.preview;
+    } catch (err) {
+      vscode.window.showErrorMessage(`PyPilot: pixi migration preview failed. ${err}`);
+      return;
+    }
+    // No preview: the server has already explained why (not applicable,
+    // already a pixi project, ...).
+    if (!preview?.trim()) return;
+
+    const doc = await vscode.workspace.openTextDocument({ language: "markdown", content: preview });
+    await vscode.window.showTextDocument(doc, { preview: true, viewColumn: vscode.ViewColumn.Beside });
+
+    const WRITE = "Write pixi.toml";
+    const WRITE_INSTALL = "Write and run pixi install";
+    const choice = await vscode.window.showInformationMessage(
+      "PyPilot: write pixi.toml as shown in the preview?",
+      {
+        modal: true,
+        detail:
+          "The preview is open in the editor. \"Write and run pixi install\" also creates the pixi environment " +
+          "(pixi writes pixi.lock); PyPilot never creates a .venv in a pixi project.",
+      },
+      WRITE,
+      WRITE_INSTALL
+    );
+    if (!choice) return;
+
+    const install = choice === WRITE_INSTALL;
+    statusBar.setStatus("checking", "migrating to pixi");
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "PyPilot", cancellable: false },
+      async (progress) => {
+        progress.report({ message: install ? "Writing pixi.toml and installing…" : "Writing pixi.toml…" });
+        try {
+          const result = await migrate({ write: true, install });
+          if (result?.ok === false) {
+            statusBar.setStatus("error", "pixi migration failed");
+            return;
+          }
+          statusBar.setStatus("ok");
+          const written = result?.written ?? [];
+          const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+          const manifest = written.find((p) => /(^|[\\/])pixi\.toml$/.test(p));
+          vscode.window.showInformationMessage(
+            written.length
+              ? `PyPilot: wrote ${written.join(", ")}.`
+              : "PyPilot: pixi project initialized."
+          );
+          if (manifest) {
+            const uri = path.isAbsolute(manifest) || !root
+              ? vscode.Uri.file(manifest)
+              : vscode.Uri.file(path.join(root, manifest));
+            await vscode.window.showTextDocument(uri, { preview: false });
+          }
+        } catch (err) {
+          statusBar.setStatus("error", "pixi migration failed");
+          vscode.window.showErrorMessage(`PyPilot: pixi migration failed. ${err}`);
         }
       }
     );
