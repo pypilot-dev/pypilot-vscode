@@ -27,7 +27,7 @@ import { PyPilotStatusBar } from "./statusBar";
 import { registerCommands } from "./commands";
 import { PyPilotTaskProvider } from "./tasks";
 import { ReportPanel } from "./webview/reportPanel";
-import { registerVenvSelection } from "./venv";
+import { pixiEnvName, registerVenvSelection } from "./venv";
 
 let client: LanguageClient | undefined;
 let statusBar: PyPilotStatusBar | undefined;
@@ -87,9 +87,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       { scheme: "file", pattern: "**/pyproject.toml" },
       { scheme: "file", pattern: "**/environment.yml" },
     ],
+    // The pixi environment the server should use (the same one venv.ts
+    // selects as the interpreter). The server reads it from here at startup;
+    // later changes arrive through `configurationSection` below.
+    initializationOptions: {
+      pixiEnvironment: pixiEnvName(vscode.workspace.workspaceFolders?.[0]),
+    },
     synchronize: {
+      // Sends workspace/didChangeConfiguration with `{ settings: { pypilot:
+      // { ... } } }` once after startup and whenever a pypilot.* setting
+      // changes. Servers that do not read it simply ignore the notification.
+      configurationSection: "pypilot",
       fileEvents: vscode.workspace.createFileSystemWatcher(
-        "**/{requirements.txt,pyproject.toml,environment.yml,*.py}"
+        "**/{requirements.txt,pyproject.toml,pixi.toml,environment.yml,*.py}"
       ),
     },
     outputChannelName: "PyPilot",

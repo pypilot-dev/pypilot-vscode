@@ -35,6 +35,7 @@
     "workspaceContains:**/*.py",
     "workspaceContains:requirements.txt",
     "workspaceContains:pyproject.toml",
+    "workspaceContains:pixi.toml",
     "workspaceContains:environment.yml",
     "onNotebook:jupyter-notebook"
   ],
