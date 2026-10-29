@@ -119,15 +119,15 @@ export class PyPilotStatusBar {
       case 'ok':
         this.item.text = `$(check) PyPilot${detail ? `: ${detail}` : ''}`;
         headline = detail
-          ? `PyPilot: ${detail} — click to open the doctor report`
-          : 'PyPilot: environment looks good — click to open the doctor report';
+          ? `PyPilot: ${detail}. Click to open the doctor report`
+          : 'PyPilot: environment looks good. Click to open the doctor report';
         this.item.backgroundColor = undefined;
         this.item.command = 'pypilot.doctor';
         break;
 
       case 'warning':
         this.item.text = `$(warning) PyPilot${detail ? `: ${detail}` : ''}`;
-        headline = `PyPilot: ${detail ?? 'environment needs attention'} — click to fix`;
+        headline = `PyPilot: ${detail ?? 'environment needs attention'}. Click to fix`;
         this.item.backgroundColor = new vscode.ThemeColor(
           'statusBarItem.warningBackground'
         );
@@ -136,7 +136,7 @@ export class PyPilotStatusBar {
 
       case 'error':
         this.item.text = `$(error) PyPilot${detail ? `: ${detail}` : ''}`;
-        headline = `PyPilot: ${detail ?? 'environment error'} — click to fix`;
+        headline = `PyPilot: ${detail ?? 'environment error'}. Click to fix`;
         this.item.backgroundColor = new vscode.ThemeColor(
           'statusBarItem.errorBackground'
         );
@@ -153,7 +153,7 @@ export class PyPilotStatusBar {
       case 'unavailable':
         this.item.text = `$(warning) PyPilot${detail ? `: ${detail}` : ''}`;
         headline =
-          'PyPilot: the pypilot helper binary could not be located — see the error notification for details';
+          'PyPilot: the pypilot helper binary could not be located. See the error notification for details';
         this.item.backgroundColor = new vscode.ThemeColor(
           'statusBarItem.warningBackground'
         );
@@ -164,7 +164,7 @@ export class PyPilotStatusBar {
       case 'idle':
       default:
         this.item.text = '$(python) PyPilot';
-        headline = 'PyPilot: Python environment manager — click to open report';
+        headline = 'PyPilot: Python environment manager. Click to open the report';
         this.item.backgroundColor = undefined;
         this.item.command = 'pypilot.doctor';
         break;

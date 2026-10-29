@@ -68,7 +68,7 @@ export class ReportPanel {
   private constructor() {
     this.panel = vscode.window.createWebviewPanel(
       "pypilotReport",
-      "PyPilot — Environment Report",
+      "PyPilot: Environment Report",
       vscode.ViewColumn.Beside,
       {
         enableScripts: true,
@@ -136,8 +136,8 @@ export class ReportPanel {
     const multiRoot = (vscode.workspace.workspaceFolders?.length ?? 0) > 1;
     this.panel.title =
       multiRoot && options.folder
-        ? `PyPilot — Environment Report (${options.folder.name})`
-        : "PyPilot — Environment Report";
+        ? `PyPilot: Environment Report (${options.folder.name})`
+        : "PyPilot: Environment Report";
     this.panel.webview.html = buildHtml(markdown, {
       mode: "panel",
       folderName: multiRoot ? options.folder?.name : undefined,
@@ -397,7 +397,7 @@ for (const button of document.querySelectorAll("button[data-command]")) {
 <div class="header-row">
   <span class="logo">🐍</span>
   <div>
-    <h1>PyPilot — Environment Report</h1>
+    <h1>PyPilot: Environment Report</h1>
     <p class="subtitle">${subtitle}</p>
   </div>
 </div>
