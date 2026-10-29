@@ -85,10 +85,10 @@ function log(msg: string): void {
   console.log(`PyPilot [venv]: ${msg}`);
 }
 
-type EnvKind = 'venv' | 'pixi';
+export type EnvKind = 'venv' | 'pixi';
 
 /** The environment PyPilot treats as "the project's" for a folder. */
-interface ProjectEnv {
+export interface ProjectEnv {
   readonly kind: EnvKind;
   /** pixi environment name (`default`, `cuda`, ...); undefined for `.venv`. */
   readonly name?: string;
@@ -99,7 +99,7 @@ interface ProjectEnv {
 }
 
 /** True for a pixi project: `pixi.toml`, or pixi tables in `pyproject.toml`. */
-function isPixiProject(folder: vscode.WorkspaceFolder): boolean {
+export function isPixiProject(folder: vscode.WorkspaceFolder): boolean {
   const root = folder.uri.fsPath;
   try {
     if (fs.existsSync(path.join(root, 'pixi.toml'))) return true;
@@ -120,7 +120,7 @@ export function pixiEnvName(folder: vscode.WorkspaceFolder | undefined): string 
   return DEFAULT_PIXI_ENV;
 }
 
-function projectEnv(folder: vscode.WorkspaceFolder): ProjectEnv {
+export function projectEnv(folder: vscode.WorkspaceFolder): ProjectEnv {
   const win = process.platform === 'win32';
   if (isPixiProject(folder)) {
     // Conda layout: on Windows python.exe sits in the prefix root.
@@ -215,7 +215,7 @@ async function activeEnvPaths(
 }
 
 /** Read "X.Y" from pyvenv.cfg (`version` for venv, `version_info` for uv). */
-function cfgVersion(dir: string): string | undefined {
+export function cfgVersion(dir: string): string | undefined {
   try {
     const text = fs.readFileSync(path.join(dir, 'pyvenv.cfg'), 'utf8');
     const m = /^\s*version(?:_info)?\s*=\s*(\d+)\.(\d+)/m.exec(text);
@@ -226,7 +226,7 @@ function cfgVersion(dir: string): string | undefined {
 }
 
 /** Read "X.Y" from the `python-X.Y.Z-<build>.json` record in conda-meta. */
-function condaMetaVersion(dir: string): string | undefined {
+export function condaMetaVersion(dir: string): string | undefined {
   try {
     for (const name of fs.readdirSync(path.join(dir, 'conda-meta'))) {
       // Digits right after "python-" skip python-dateutil, python_abi etc.

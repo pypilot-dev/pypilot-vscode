@@ -19,6 +19,10 @@ import {
 } from "vscode-languageclient/node";
 import { PyPilotStatusBar } from "./statusBar";
 import { checkForHelperUpdate, ensureHelper } from "./downloader";
+import { activeFolder, ClientManager, FolderClient } from "./clients";
+import { condaEnvFile, dependsOnTorch } from "./project";
+import { isPixiProject } from "./venv";
+import { ReportRouter } from "./report";
 
 // Must match the command IDs registered in the LSP server (lsp/mod.rs).
 const CMD_FIX = "pypilot.fixEverything";
@@ -90,13 +94,31 @@ async function runServerCommand(
   return (result as { ok?: boolean } | null)?.ok !== false;
 }
 
+/** Shown when a command needs a project server and none runs. */
+const NO_PROJECT =
+  "PyPilot: no Python project is open. Open a folder with Python files or a pyproject.toml / requirements.txt.";
+
 export function registerCommands(
   context: vscode.ExtensionContext,
-  client: LanguageClient,
+  clients: ClientManager,
   statusBar: PyPilotStatusBar,
   /** The binary the extension resolved: a PATH install or the managed download. */
-  helperPath: string
+  helperPath: string,
+  reports: ReportRouter
 ): void {
+  /**
+   * The server for the folder a command acts on: the active editor's
+   * folder, else the only one, else a quick pick. `filter` narrows the
+   * choice to folders the command applies to.
+   */
+  const target = async (filter?: (folder: vscode.WorkspaceFolder) => boolean): Promise<FolderClient | undefined> => {
+    const fc = await clients.pick({
+      filter: filter ? (c) => c.folder === undefined || filter(c.folder) : undefined,
+    });
+    if (!fc && clients.all().length === 0) vscode.window.showInformationMessage(NO_PROJECT);
+    return fc;
+  };
+
   // VS Code passes extra arguments into command callbacks (keybindings, other
   // extensions). `never[]` keeps the zero-argument handlers type-safe while
   // still letting `pypilot.install` accept an optional package name.
@@ -105,6 +127,9 @@ export function registerCommands(
 
   // ── pypilot.setup ─────────────────────────────────────────────────────────
   r("pypilot.setup", async () => {
+    const fc = await target();
+    if (!fc) return;
+    const client = fc.client;
     statusBar.setStatus("checking");
     await vscode.window.withProgress(
       {
@@ -133,6 +158,9 @@ export function registerCommands(
 
   // ── pypilot.doctor ────────────────────────────────────────────────────────
   r("pypilot.doctor", async () => {
+    const fc = await target();
+    if (!fc) return;
+    const client = fc.client;
     statusBar.setStatus("checking");
     await vscode.window.withProgress(
       {
@@ -159,6 +187,9 @@ export function registerCommands(
 
   // ── pypilot.fixPython ─────────────────────────────────────────────────────
   r("pypilot.fixPython", async () => {
+    const fc = await target();
+    if (!fc) return;
+    const client = fc.client;
     statusBar.setStatus("checking");
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: "PyPilot", cancellable: false },
@@ -183,6 +214,11 @@ export function registerCommands(
 
   // ── pypilot.fixCuda ───────────────────────────────────────────────────────
   r("pypilot.fixCuda", async () => {
+    // Prefer folders that depend on torch / TensorFlow; any folder if none does.
+    const ml = clients.all().some((c) => c.folder && dependsOnTorch(c.folder));
+    const fc = await target(ml ? dependsOnTorch : undefined);
+    if (!fc) return;
+    const client = fc.client;
     statusBar.setStatus("checking");
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: "PyPilot", cancellable: false },
@@ -214,6 +250,9 @@ export function registerCommands(
         v.trim() ? undefined : "Please enter a package name.",
     });
     if (!pkg) return;
+    const fc = await target();
+    if (!fc) return;
+    const client = fc.client;
 
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: "PyPilot", cancellable: false },
@@ -250,6 +289,9 @@ export function registerCommands(
       },
     });
     if (!pkg) return;
+    const fc = await target();
+    if (!fc) return;
+    const client = fc.client;
 
     statusBar.setStatus("checking", `installing ${pkg}`);
     await vscode.window.withProgress(
@@ -298,6 +340,11 @@ export function registerCommands(
 
   // ── pypilot.migrateConda ──────────────────────────────────────────────────
   r("pypilot.migrateConda", async () => {
+    const folder = await pickFolder(
+      (f) => condaEnvFile(f) !== undefined,
+      "PyPilot: migrate the environment.yml of which folder?"
+    );
+    if (folder === null) return;
     const answer = await vscode.window.showInformationMessage(
       "PyPilot: Migrate environment.yml to pyproject.toml?",
       { modal: true },
@@ -311,12 +358,17 @@ export function registerCommands(
         progress.report({ message: "Migrating conda environment…" });
         try {
           // Same as update-data: run the resolved binary, not a bare name.
+          // Runs in the chosen folder: migrate-conda reads ./environment.yml.
           const task = new vscode.Task(
             { type: "shell" },
-            vscode.TaskScope.Workspace,
+            folder ?? vscode.TaskScope.Workspace,
             "pypilot migrate-conda",
             "PyPilot",
-            new vscode.ShellExecution(helperPath, ["migrate-conda"])
+            new vscode.ShellExecution(
+              helperPath,
+              ["migrate-conda"],
+              folder ? { cwd: folder.uri.fsPath } : undefined
+            )
           );
           await vscode.tasks.executeTask(task);
         } catch (err) {
@@ -327,13 +379,34 @@ export function registerCommands(
   });
 
   // ── pypilot.openReport ────────────────────────────────────────────────────
+  // Shows the server's report in the webview panel (with the export
+  // actions). From the report's own Markdown editor (editor title button)
+  // it shows that report without scanning again.
   r("pypilot.openReport", async () => {
-    // Delegate to doctor — the LSP server opens the markdown doc itself.
-    await vscode.commands.executeCommand("pypilot.doctor");
+    if (reports.isReportFile(vscode.window.activeTextEditor?.document.uri) && reports.showLast()) return;
+    const fc = await target();
+    if (!fc) return;
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "PyPilot", cancellable: false },
+      async (progress) => {
+        progress.report({ message: "Running environment scan…" });
+        try {
+          await reports.open(fc);
+        } catch (err) {
+          vscode.window.showErrorMessage(`PyPilot: could not open the report. ${err}`);
+        }
+      }
+    );
   });
 
   // ── pypilot.installUv ─────────────────────────────────────────────────────
   r("pypilot.installUv", async () => {
+    // Installs for the whole machine: any running server can do it.
+    const client = (clients.current() ?? clients.all()[0])?.client;
+    if (!client) {
+      vscode.window.showInformationMessage(NO_PROJECT);
+      return;
+    }
     statusBar.setStatus("checking");
     await vscode.window.withProgress(
       {
@@ -359,10 +432,15 @@ export function registerCommands(
   // the outcome itself. A helper too old to know the command gets the
   // official installer in a terminal instead, after asking.
   r("pypilot.installPixiCli", async () => {
-    if (!(await serverSupports(client, CMD_INSTALL_PIXI))) {
+    // Installs for the whole machine: any running server can do it, and
+    // without one the official installer below still works.
+    const client = (clients.current() ?? clients.all()[0])?.client;
+    if (!client || !(await serverSupports(client, CMD_INSTALL_PIXI))) {
       const script = process.platform === "win32" ? PIXI_INSTALL_WINDOWS : PIXI_INSTALL_UNIX;
       const answer = await vscode.window.showInformationMessage(
-        "PyPilot: this helper cannot install pixi itself. Run pixi's official installer in a terminal?",
+        client
+          ? "PyPilot: this helper cannot install pixi itself. Run pixi's official installer in a terminal?"
+          : "PyPilot: run pixi's official installer in a terminal?",
         { modal: true, detail: script },
         "Run installer"
       );
@@ -408,6 +486,11 @@ export function registerCommands(
   // The engine's own finding fix calls pypilot.migrateToPixi directly; the
   // language client handles that without any code here.
   r("pypilot.initPixiProject", async () => {
+    // Only folders that are not pixi projects yet; the server explains if
+    // the chosen one cannot be migrated.
+    const fc = await target((f) => !isPixiProject(f));
+    if (!fc) return;
+    const client = fc.client;
     if (!(await serverSupports(client, CMD_MIGRATE_PIXI))) {
       const answer = await vscode.window.showInformationMessage(
         "PyPilot: this helper cannot initialize pixi projects yet. Update it with \"PyPilot: Check for Helper Updates\".",
@@ -474,7 +557,7 @@ export function registerCommands(
           }
           statusBar.setStatus("ok");
           const written = result?.written ?? [];
-          const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+          const root = (fc.folder ?? vscode.workspace.workspaceFolders?.[0])?.uri.fsPath;
           const manifest = written.find((p) => /(^|[\\/])pixi\.toml$/.test(p));
           vscode.window.showInformationMessage(
             written.length
@@ -506,4 +589,25 @@ export function registerCommands(
       vscode.window.showErrorMessage(`PyPilot: update check failed. ${err}`);
     }
   });
+}
+
+/**
+ * The workspace folder a folder-based command acts on: the active editor's
+ * folder when it qualifies, the only qualifying folder, or a quick pick.
+ * Undefined means "no folder, run in the workspace" (no folder qualifies
+ * or none is open); null means the user cancelled the pick.
+ */
+async function pickFolder(
+  filter: (folder: vscode.WorkspaceFolder) => boolean,
+  placeHolder: string
+): Promise<vscode.WorkspaceFolder | undefined | null> {
+  const folders = (vscode.workspace.workspaceFolders ?? []).filter(filter);
+  const active = activeFolder();
+  if (active && folders.includes(active)) return active;
+  if (folders.length <= 1) return folders[0];
+  const picked = await vscode.window.showQuickPick(
+    folders.map((folder) => ({ label: folder.name, description: folder.uri.fsPath, folder })),
+    { placeHolder }
+  );
+  return picked ? picked.folder : null;
 }

@@ -6,30 +6,29 @@
  *   1. Register the status bar item (before the helper lookup, so that a
  *      failed download still leaves an indicator behind).
  *   2. Locate / download the `pypilot` helper binary (downloader.ts).
- *   3. Start the language client (LanguageClient wrapping `pypilot lsp`).
+ *   3. Start the language clients (`pypilot lsp`), one per workspace folder
+ *      with a Python project (clients.ts).
  *   4. Register all command palette handlers.
  *   5. Register the task provider.
  *   6. On workspace open: if auto-check is on, run a silent scan and surface
  *      any findings via a VS Code-native popup with action buttons.
  *
- * Deactivation: stop the language client (cleans up the language server process).
+ * Deactivation: stop the language clients (cleans up the server processes).
  */
 
 import * as vscode from "vscode";
-import {
-  LanguageClient,
-  LanguageClientOptions,
-  ServerOptions,
-} from "vscode-languageclient/node";
 
 import { ensureHelper, checkForHelperUpdate } from "./downloader";
 import { PyPilotStatusBar } from "./statusBar";
 import { registerCommands } from "./commands";
 import { PyPilotTaskProvider } from "./tasks";
 import { ReportPanel } from "./webview/reportPanel";
-import { pixiEnvName, registerVenvSelection } from "./venv";
+import { registerVenvSelection } from "./venv";
+import { registerContextKeys } from "./project";
+import { ClientManager } from "./clients";
+import { ReportRouter } from "./report";
 
-let client: LanguageClient | undefined;
+let clients: ClientManager | undefined;
 let statusBar: PyPilotStatusBar | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -37,6 +36,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Registered first because it only talks to the Python extensions: it must
   // keep working even if the helper binary cannot be found below.
   registerVenvSelection(context);
+  // Context keys behind the palette's `when` clauses: plain file checks.
+  registerContextKeys(context);
 
   // ── 1. Status bar ─────────────────────────────────────────────────────────
   // Created before the helper lookup so that a failed download still leaves a
@@ -68,65 +69,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     });
   }
 
-  // ── 3. Language client ────────────────────────────────────────────────────
-  const serverOptions: ServerOptions = {
-    command: helperPath,
-    args: ["lsp"],
-  };
-
-  const clientOptions: LanguageClientOptions = {
-    // Activate for Python files and the manifest formats PyPilot understands.
-    documentSelector: [
-      { scheme: "file", language: "python" },
-      // Python cells inside notebooks (.ipynb). The server does not advertise
-      // notebookDocumentSync, so vscode-languageclient syncs each cell as an
-      // ordinary text document (didOpen/didChange keyed by the cell URI),
-      // which is all diagnostics and code actions need.
-      { scheme: "vscode-notebook-cell", language: "python" },
-      { scheme: "file", pattern: "**/requirements.txt" },
-      { scheme: "file", pattern: "**/pyproject.toml" },
-      { scheme: "file", pattern: "**/environment.yml" },
-    ],
-    // The pixi environment the server should use (the same one venv.ts
-    // selects as the interpreter). The server reads it from here at startup;
-    // later changes arrive through `configurationSection` below.
-    initializationOptions: {
-      pixiEnvironment: pixiEnvName(vscode.workspace.workspaceFolders?.[0]),
+  // ── 3. Language clients ───────────────────────────────────────────────────
+  // One server per workspace folder that holds a Python project; a
+  // single-folder window gets exactly one, as before.
+  // The report panel takes its Markdown from the server's report document.
+  const reports = new ReportRouter(helperPath);
+  clients = new ClientManager({
+    helperPath,
+    middleware: (folder) => reports.middleware(folder),
+    onStarted: (_fc, ok, err) => {
+      if (ok) {
+        statusBar?.setStatus("ok");
+        return;
+      }
+      statusBar?.setStatus("error", "LSP failed to start");
+      vscode.window.showErrorMessage(`PyPilot LSP failed to start: ${err}`);
     },
-    synchronize: {
-      // Sends workspace/didChangeConfiguration with `{ settings: { pypilot:
-      // { ... } } }` once after startup and whenever a pypilot.* setting
-      // changes. Servers that do not read it simply ignore the notification.
-      configurationSection: "pypilot",
-      fileEvents: vscode.workspace.createFileSystemWatcher(
-        "**/{requirements.txt,pyproject.toml,pixi.toml,environment.yml,*.py}"
-      ),
-    },
-    outputChannelName: "PyPilot",
-  };
-
-  client = new LanguageClient(
-    "pypilot",
-    "PyPilot",
-    serverOptions,
-    clientOptions
-  );
-
-  // Update the status bar once the server is ready.
-  // In vscode-languageclient v9, start() returns Promise<void> (not Disposable),
-  // and onReady() was removed. Use start() directly for readiness.
-  client.start().then(() => {
-    statusBar?.setStatus("ok");
-  }).catch((err) => {
-    console.error("PyPilot LSP failed to start:", err);
-    statusBar?.setStatus("error", "LSP failed to start");
-    vscode.window.showErrorMessage(`PyPilot LSP failed to start: ${err}`);
   });
-
-  context.subscriptions.push({ dispose: () => client?.stop() });
+  context.subscriptions.push({ dispose: () => clients?.dispose() });
+  clients.start();
 
   // ── 4. Commands ───────────────────────────────────────────────────────────
-  registerCommands(context, client, statusBar, helperPath);
+  registerCommands(context, clients, statusBar, helperPath, reports);
 
   // ── 5. Task provider ──────────────────────────────────────────────────────
   context.subscriptions.push(
@@ -149,7 +113,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export async function deactivate(): Promise<void> {
-  await client?.stop();
+  await clients?.dispose();
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +121,7 @@ export async function deactivate(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function runOnboardingCheck(context: vscode.ExtensionContext): Promise<void> {
-  if (!client) return;
+  if (!clients) return;
 
   const notifications = vscode.workspace
     .getConfiguration("pypilot")

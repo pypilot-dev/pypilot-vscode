@@ -2,9 +2,12 @@
  * reportPanel.ts — A VS Code Webview panel that renders the PyPilot doctor
  * report as a rich interactive HTML page instead of a plain markdown file.
  *
- * The panel is created lazily and reused (singleton). The helper writes the
- * report to a temp .md file; this panel reads it and renders it as HTML with
- * color-coded badges and clickable action buttons that invoke VS Code commands.
+ * The panel is created lazily and reused (singleton). Its Markdown is the
+ * report the server produces for `pypilot.showDetails` (see report.ts); the
+ * panel renders it as HTML with color-coded badges and action buttons that
+ * invoke VS Code commands, and can export it: "Copy as Markdown" puts the
+ * server's Markdown on the clipboard, "Save as HTML" writes a standalone
+ * page with inline styles in the panel's current colors and no scripts.
  */
 
 import * as fs from "fs";
@@ -12,16 +15,56 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 
+/** Where the server writes the report it opens with window/showDocument. */
+export const REPORT_FILE = path.join(os.tmpdir(), "pypilot-report.md");
+
+/** The theme variables the page uses, sent back by the webview on export. */
+const THEME_VARS = [
+  "--vscode-editor-background",
+  "--vscode-editor-foreground",
+  "--vscode-textLink-foreground",
+  "--vscode-panel-border",
+  "--vscode-editor-inactiveSelectionBackground",
+  "--vscode-descriptionForeground",
+  "--vscode-font-family",
+  "--vscode-font-size",
+  "--vscode-editor-font-family",
+] as const;
+
+/** Used for a variable the webview could not report (VS Code Dark Modern). */
+const DEFAULT_THEME: Record<string, string> = {
+  "--vscode-editor-background": "#1f1f1f",
+  "--vscode-editor-foreground": "#cccccc",
+  "--vscode-textLink-foreground": "#4daafc",
+  "--vscode-panel-border": "#2b2b2b",
+  "--vscode-editor-inactiveSelectionBackground": "#3a3d41",
+  "--vscode-descriptionForeground": "#9d9d9d",
+  "--vscode-font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
+  "--vscode-font-size": "13px",
+  "--vscode-editor-font-family": "Consolas, 'Courier New', monospace",
+};
+
+export interface ReportOptions {
+  /** The folder the report is about (shown in multi-root windows). */
+  folder?: vscode.WorkspaceFolder;
+  /** Show the "Fix CUDA / PyTorch" button. */
+  showCuda?: boolean;
+}
+
+interface PanelMessage {
+  command: string;
+  arg?: string;
+  theme?: Record<string, unknown>;
+}
+
 export class ReportPanel {
   private static instance: ReportPanel | undefined;
 
   private readonly panel: vscode.WebviewPanel;
-  private readonly reportPath: string;
-  private watcher?: fs.FSWatcher;
+  private markdown = "";
+  private options: ReportOptions = {};
 
   private constructor() {
-    this.reportPath = path.join(os.tmpdir(), "pypilot-report.md");
-
     this.panel = vscode.window.createWebviewPanel(
       "pypilotReport",
       "PyPilot — Environment Report",
@@ -34,12 +77,11 @@ export class ReportPanel {
     );
 
     this.panel.onDidDispose(() => {
-      this.watcher?.close();
       ReportPanel.instance = undefined;
     });
 
     // Handle messages from the webview (action buttons).
-    this.panel.webview.onDidReceiveMessage(async (msg: { command: string; arg?: string }) => {
+    this.panel.webview.onDidReceiveMessage(async (msg: PanelMessage) => {
       switch (msg.command) {
         case "setup":
           await vscode.commands.executeCommand("pypilot.setup");
@@ -55,59 +97,190 @@ export class ReportPanel {
             await vscode.commands.executeCommand("pypilot.install", msg.arg);
           }
           break;
-      }
-    });
-
-    // Watch the report file so the panel refreshes whenever a new scan runs.
-    this.watchReport();
-    this.refresh();
-  }
-
-  static show(): ReportPanel {
-    if (ReportPanel.instance) {
-      ReportPanel.instance.panel.reveal(vscode.ViewColumn.Beside);
-      ReportPanel.instance.refresh();
-      return ReportPanel.instance;
-    }
-    ReportPanel.instance = new ReportPanel();
-    return ReportPanel.instance;
-  }
-
-  private watchReport(): void {
-    const dir = path.dirname(this.reportPath);
-    this.watcher = fs.watch(dir, (_event, filename) => {
-      if (filename === path.basename(this.reportPath)) {
-        this.refresh();
+        case "copyMarkdown":
+          await this.copyMarkdown();
+          break;
+        case "saveHtml":
+          await this.saveHtml(msg.theme);
+          break;
       }
     });
   }
 
-  private refresh(): void {
-    let markdown = "";
+  /** True while the panel is open. */
+  static isOpen(): boolean {
+    return ReportPanel.instance !== undefined;
+  }
+
+  /**
+   * Show the panel with `markdown`, creating it if needed. Without
+   * `markdown` it shows the last report the server wrote.
+   */
+  static show(markdown?: string, options: ReportOptions = {}): ReportPanel {
+    const panel = ReportPanel.instance ?? new ReportPanel();
+    ReportPanel.instance = panel;
+    panel.set(markdown ?? readReportFile(), options);
+    panel.panel.reveal(vscode.ViewColumn.Beside);
+    return panel;
+  }
+
+  /** Replace the content of an open panel; does nothing when it is closed. */
+  static update(markdown: string, options: ReportOptions = {}): void {
+    ReportPanel.instance?.set(markdown, options);
+  }
+
+  private set(markdown: string, options: ReportOptions): void {
+    this.markdown = markdown;
+    this.options = options;
+    const multiRoot = (vscode.workspace.workspaceFolders?.length ?? 0) > 1;
+    this.panel.title =
+      multiRoot && options.folder
+        ? `PyPilot — Environment Report (${options.folder.name})`
+        : "PyPilot — Environment Report";
+    this.panel.webview.html = buildHtml(markdown, {
+      mode: "panel",
+      folderName: multiRoot ? options.folder?.name : undefined,
+      showCuda: options.showCuda ?? true,
+    });
+  }
+
+  private async copyMarkdown(): Promise<void> {
+    await vscode.env.clipboard.writeText(this.markdown);
+    vscode.window.showInformationMessage("PyPilot: report copied to the clipboard as Markdown.");
+  }
+
+  private async saveHtml(reported: Record<string, unknown> | undefined): Promise<void> {
+    const base = this.options.folder?.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: base
+        ? vscode.Uri.joinPath(base, "pypilot-report.html")
+        : vscode.Uri.file(path.join(os.homedir(), "pypilot-report.html")),
+      filters: { HTML: ["html", "htm"] },
+      saveLabel: "Save Report",
+      title: "PyPilot: Save Report as HTML",
+    });
+    if (!target) return;
+
+    const multiRoot = (vscode.workspace.workspaceFolders?.length ?? 0) > 1;
+    const html = buildHtml(this.markdown, {
+      mode: "export",
+      folderName: multiRoot ? this.options.folder?.name : undefined,
+      theme: exportTheme(reported),
+      generated: new Date(),
+    });
     try {
-      markdown = fs.readFileSync(this.reportPath, "utf8");
-    } catch {
-      markdown = "# PyPilot\n\nNo report yet. Run **PyPilot: Doctor** to generate one.";
+      await vscode.workspace.fs.writeFile(target, Buffer.from(html, "utf8"));
+    } catch (err) {
+      vscode.window.showErrorMessage(`PyPilot: could not save the report. ${err}`);
+      return;
     }
-    this.panel.webview.html = buildHtml(markdown);
+    const open = await vscode.window.showInformationMessage(
+      `PyPilot: report saved to ${target.fsPath}.`,
+      "Open in Browser"
+    );
+    if (open) await vscode.env.openExternal(target);
   }
+}
+
+/** The report the server wrote last, or a placeholder. */
+function readReportFile(): string {
+  try {
+    return fs.readFileSync(REPORT_FILE, "utf8");
+  } catch {
+    return "# PyPilot\n\nNo report yet. Run **PyPilot: Doctor** to generate one.";
+  }
+}
+
+/**
+ * The theme for an exported page: the values the webview reported for each
+ * variable, when they are plain CSS values, else the defaults. Anything that
+ * could close the declaration or the style element is dropped.
+ */
+function exportTheme(reported: Record<string, unknown> | undefined): Record<string, string> {
+  const theme: Record<string, string> = {};
+  for (const name of THEME_VARS) {
+    const value = reported?.[name];
+    theme[name] =
+      typeof value === "string" && value.trim() && value.length < 300 && !/[<>{};\\]/.test(value)
+        ? value.trim()
+        : DEFAULT_THEME[name];
+  }
+  return theme;
 }
 
 // ---------------------------------------------------------------------------
 // HTML renderer — converts the markdown report into a styled webview page.
 // ---------------------------------------------------------------------------
 
-function buildHtml(markdown: string): string {
+interface HtmlOptions {
+  /** "panel": the live webview with buttons; "export": a standalone file. */
+  mode: "panel" | "export";
+  folderName?: string;
+  showCuda?: boolean;
+  /** Export only: concrete values for the VS Code theme variables. */
+  theme?: Record<string, string>;
+  /** Export only: when the file was written. */
+  generated?: Date;
+}
+
+function buildHtml(markdown: string, opts: HtmlOptions): string {
   const html = markdownToHtml(markdown);
+  const panel = opts.mode === "panel";
+  // The exported page has no VS Code to supply the theme variables, so it
+  // defines them itself, with the colors the panel had when it was saved.
+  const themeVars = opts.theme
+    ? `:root {\n${Object.entries(opts.theme)
+        .map(([k, v]) => `    ${k}: ${v};`)
+        .join("\n")}\n  }\n  `
+    : "";
+  const csp = panel
+    ? "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';"
+    : "default-src 'none'; style-src 'unsafe-inline';";
+  const subtitle = [
+    "Deterministic Python environment doctor · no AI · no API keys",
+    opts.folderName ? `Folder: ${esc(opts.folderName)}` : "",
+    opts.generated ? `Exported ${esc(opts.generated.toLocaleString())}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const actions = panel
+    ? `<div class="actions">
+  <button onclick="post('setup')">Fix Everything</button>
+  <button class="secondary" onclick="post('fixPython')">Fix Python Version</button>
+  ${opts.showCuda === false ? "" : `<button class="secondary" onclick="post('fixCuda')">Fix CUDA / PyTorch</button>`}
+  <span class="spacer"></span>
+  <button class="secondary" onclick="post('copyMarkdown')" title="Copy the report as Markdown">Copy as Markdown</button>
+  <button class="secondary" onclick="saveHtml()" title="Save a standalone HTML copy of this report">Save as HTML</button>
+</div>
+
+<hr style="margin: 20px 0; border-color: var(--border);">`
+    : `<hr style="margin: 20px 0; border-color: var(--border);">`;
+  const script = panel
+    ? `<script>
+const vscode = acquireVsCodeApi();
+const THEME_VARS = ${JSON.stringify(THEME_VARS)};
+function post(command, arg) {
+  vscode.postMessage({ command, arg });
+}
+// The export uses the colors this panel is showing right now.
+function saveHtml() {
+  const style = getComputedStyle(document.documentElement);
+  const theme = {};
+  for (const name of THEME_VARS) theme[name] = style.getPropertyValue(name).trim();
+  vscode.postMessage({ command: 'saveHtml', theme });
+}
+</script>`
+    : "";
+
   return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-<title>PyPilot Report</title>
+<meta http-equiv="Content-Security-Policy" content="${csp}">
+<title>PyPilot Report${opts.folderName ? ` (${esc(opts.folderName)})` : ""}</title>
 <style>
-  :root {
+  ${themeVars}:root {
     --bg: var(--vscode-editor-background);
     --fg: var(--vscode-editor-foreground);
     --accent: var(--vscode-textLink-foreground, #4fc3f7);
@@ -130,6 +303,7 @@ function buildHtml(markdown: string): string {
     margin: 0 auto;
     line-height: 1.6;
   }
+  a { color: var(--accent); }
   h1 { font-size: 1.6em; margin-bottom: 4px; }
   h2 { font-size: 1.15em; margin: 20px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
   h3 { font-size: 1em; margin: 12px 0 4px; }
@@ -176,6 +350,7 @@ function buildHtml(markdown: string): string {
 
   /* Action buttons */
   .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .actions .spacer { flex: 1; }
   button {
     cursor: pointer;
     border: none;
@@ -208,26 +383,15 @@ function buildHtml(markdown: string): string {
   <span class="logo">🐍</span>
   <div>
     <h1>PyPilot — Environment Report</h1>
-    <p class="subtitle">Deterministic Python environment doctor · no AI · no API keys</p>
+    <p class="subtitle">${subtitle}</p>
   </div>
 </div>
 
-<div class="actions">
-  <button onclick="post('setup')">$(rocket) Fix Everything</button>
-  <button class="secondary" onclick="post('fixPython')">Fix Python Version</button>
-  <button class="secondary" onclick="post('fixCuda')">Fix CUDA / PyTorch</button>
-</div>
-
-<hr style="margin: 20px 0; border-color: var(--border);">
+${actions}
 
 ${html}
 
-<script>
-const vscode = acquireVsCodeApi();
-function post(command, arg) {
-  vscode.postMessage({ command, arg });
-}
-</script>
+${script}
 </body>
 </html>`;
 }

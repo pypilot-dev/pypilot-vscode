@@ -113,6 +113,33 @@
         "icon": "$(symbol-namespace)"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "pypilot.fixCuda",
+          "when": "pypilot.hasTorch"
+        },
+        {
+          "command": "pypilot.migrateConda",
+          "when": "pypilot.hasCondaEnv"
+        },
+        {
+          "command": "pypilot.initPixiProject",
+          "when": "pypilot.hasNonPixiProject"
+        },
+        {
+          "command": "pypilot.installPixiCli",
+          "when": "!pypilot.pixiInstalled"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "pypilot.openReport",
+          "when": "resourceFilename == pypilot-report.md",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "PyPilot",
       "properties": {
@@ -160,6 +187,17 @@
           "pattern": "^[a-z0-9-]+$",
           "patternErrorMessage": "pixi environment names use lowercase letters, digits and dashes.",
           "markdownDescription": "Which pixi environment PyPilot and the interpreter selection use in multi-environment pixi projects (the `[environments]` table of `pixi.toml`). The interpreter is `.pixi/envs/<name>`; install it with `pixi install -e <name>`. Ignored outside pixi projects.",
+          "scope": "resource"
+        },
+        "pypilot.diagnosticsScope": {
+          "type": "string",
+          "enum": ["openFiles", "workspace"],
+          "enumDescriptions": [
+            "Check imports only in files that are open in the editor (default).",
+            "Also scan every Python file in the workspace in the background, so the Problems panel lists import problems in files that are not open. Needs a helper that supports it; older helpers keep checking open files only."
+          ],
+          "default": "openFiles",
+          "description": "Which files PyPilot reports import diagnostics for.",
           "scope": "resource"
         },
         "pypilot.dataRefreshDays": {
