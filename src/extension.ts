@@ -45,13 +45,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
   // ── 2. Resolve the helper binary ─────────────────────────────────────────
+  // One "PyPilot" output channel for both the engine lookup (which helper,
+  // verified downloads) and the language client below.
+  const output = vscode.window.createOutputChannel("PyPilot");
+  context.subscriptions.push(output);
+  const log = (line: string) => output.appendLine(`[engine] ${line}`);
+
   let helperPath: string;
   let helperInfo: Awaited<ReturnType<typeof ensureHelper>> | undefined;
   try {
-    helperInfo = await ensureHelper(context);
+    helperInfo = await ensureHelper(context, log);
     helperPath = helperInfo.path;
-    console.log(`PyPilot: using helper ${helperInfo.path} v${helperInfo.version} (managed=${helperInfo.managed})`);
+    log(`using ${helperInfo.path} v${helperInfo.version} (${helperInfo.source})`);
   } catch (err) {
+    log(`no usable helper: ${err}`);
     statusBar.setStatus("unavailable", "helper not found");
     vscode.window.showErrorMessage(
       `PyPilot: could not locate the helper binary. ${err}\n` +
@@ -102,7 +109,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         "**/{requirements.txt,pyproject.toml,pixi.toml,environment.yml,*.py}"
       ),
     },
-    outputChannelName: "PyPilot",
+    outputChannel: output,
   };
 
   client = new LanguageClient(

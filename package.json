@@ -116,6 +116,12 @@
     "configuration": {
       "title": "PyPilot",
       "properties": {
+        "pypilot.helperPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to a `pypilot` executable to use instead of the downloaded engine, for example a local build (`target/release/pypilot`). When set, PyPilot runs exactly this binary (it must answer `--version`), never downloads the engine and does not offer engine updates. Leave empty to use the engine pinned by this extension.",
+          "scope": "machine"
+        },
         "pypilot.engineUpdates": {
           "type": "string",
           "enum": ["pinned", "latest"],

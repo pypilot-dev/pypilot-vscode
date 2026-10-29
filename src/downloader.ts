@@ -3,6 +3,8 @@
  * binary (the engine).
  *
  * Resolution order:
+ *  0. `pypilot.helperPath`, when set: that binary and nothing else (no
+ *     download, no update offers). For developers running a local build.
  *  1. `pypilot` on $PATH and the managed copy in the extension's global
  *     storage; the newer of the two wins.
  *  2. Otherwise download the engine version pinned in package.json
@@ -64,8 +66,8 @@ export interface HelperInfo {
   version: string;
   /** True for the copy in the extension's storage (which updates replace). */
   managed: boolean;
-  /** Where it came from: PATH or managed storage. */
-  source: 'path' | 'managed';
+  /** Where it came from: `pypilot.helperPath`, PATH or managed storage. */
+  source: 'setting' | 'path' | 'managed';
 }
 
 type Log = (line: string) => void;
@@ -78,6 +80,23 @@ export async function ensureHelper(
   context: vscode.ExtensionContext,
   log: Log = (line) => console.log(`PyPilot: ${line}`)
 ): Promise<HelperInfo> {
+  // 0. An explicit helper (developers): use it or fail, never download.
+  const configured = configuredHelperPath();
+  if (configured) {
+    const ver = probeVersion(configured);
+    if (!ver) {
+      throw new Error(
+        `pypilot.helperPath is set to "${configured}", but running it with --version failed. ` +
+          'Fix the path (it must be the pypilot executable itself) or clear the setting to use the downloaded engine.'
+      );
+    }
+    log(
+      `using the helper from pypilot.helperPath: ${configured} (v${fmtVersion(ver)}); ` +
+        'engine downloads and update checks are skipped.'
+    );
+    return { path: configured, version: fmtVersion(ver), managed: false, source: 'setting' };
+  }
+
   // A helper replaced by an update stays on disk while the old language server
   // runs it; delete such leftovers now that nothing should be using them.
   const binDir = managedBinDir(context);
@@ -156,6 +175,11 @@ export async function checkForHelperUpdate(
   const say = (msg: string) => {
     if (options.manual) vscode.window.showInformationMessage(msg);
   };
+
+  if (current.source === 'setting') {
+    say(`PyPilot: using the helper from pypilot.helperPath (v${current.version}); updates are not checked.`);
+    return;
+  }
 
   // Honour a snooze — don't nag every single activation.
   const lastDismissed = context.globalState.get<number>('pypilot.updateDismissedAt', 0);
@@ -265,7 +289,7 @@ export async function installEngineVersion(
   if (!asset) {
     throw new Error(
       `PyPilot has no engine build for ${process.platform}/${process.arch}. ` +
-        'Build it from source (cargo install --path helper) and put it on PATH.'
+        'Build it from source (cargo install --path helper) and set pypilot.helperPath.'
     );
   }
   const { download } = endpoints(context);
@@ -305,7 +329,7 @@ async function sha256FromSums(url: string, version: string, asset: string): Prom
       throw new Error(
         `engine v${version} has no ${SHA256SUMS_ASSET} file, so its download cannot be verified and was not installed. ` +
           'Set pypilot.engineUpdates to "pinned" to use the version this extension ships with, ' +
-          'or install pypilot yourself and put it on PATH.'
+          'or install pypilot yourself and point pypilot.helperPath at it.'
       );
     }
     throw err;
@@ -338,6 +362,16 @@ function enginePin(context: vscode.ExtensionContext): EnginePin {
 function updatePolicy(): EngineUpdatePolicy {
   const value = vscode.workspace.getConfiguration('pypilot').get<string>('engineUpdates', 'pinned');
   return value === 'latest' ? 'latest' : 'pinned';
+}
+
+/** `pypilot.helperPath`, with `~` expanded; undefined when unset. */
+function configuredHelperPath(): string | undefined {
+  const raw = vscode.workspace.getConfiguration('pypilot').get<string>('helperPath', '').trim();
+  if (!raw) return undefined;
+  const expanded = raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\')
+    ? path.join(os.homedir(), raw.slice(1))
+    : raw;
+  return path.resolve(expanded);
 }
 
 function helperBinName(): string {
