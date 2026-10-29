@@ -1,37 +1,59 @@
 /**
  * downloader.ts — locate or download the platform-matching `pypilot` helper
- * binary, mirroring the logic in the Zed WASM shim.
+ * binary (the engine).
  *
  * Resolution order:
- *  1. `pypilot` on $PATH (if the version is new enough)
- *  2. A previously-downloaded binary in the extension's global storage
- *  3. Download the latest release asset from GitHub
+ *  1. `pypilot` on $PATH and the managed copy in the extension's global
+ *     storage; the newer of the two wins.
+ *  2. Otherwise download the engine version pinned in package.json
+ *     (`pypilotEngine`), never "whatever is latest".
  *
- * Update checking:
- *  On every activation the extension compares the local helper version against
- *  the latest GitHub release tag.  If a newer version is available the user is
- *  prompted to update.  Managed binaries are replaced in-place; PATH binaries
- *  offer to download the managed copy so the user's system install is untouched.
+ * Every download is checked before anything is extracted: the pinned version
+ * against the SHA-256 in package.json, any other version against the
+ * release's SHA256SUMS asset. A mismatch, or a release without SHA256SUMS,
+ * installs nothing.
+ *
+ * Update checking (`pypilot.engineUpdates`):
+ *  - "pinned" (default): offer the pinned version when it is newer than the
+ *    helper in use. Updating the extension is what moves the pin.
+ *  - "latest": also offer newer engine releases from GitHub, verified
+ *    against their SHA256SUMS.
+ *  Managed binaries are replaced in place; a PATH install is left alone and
+ *  the managed copy, being newer, wins on the next activation.
  */
 
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
-import * as https from 'https';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
+import {
+  EnginePin,
+  EngineUpdatePolicy,
+  SHA256SUMS_ASSET,
+  Version,
+  assetForPlatform,
+  compareVersions,
+  fmtVersion,
+  parseSha256Sums,
+  parseVersion,
+  pinnedSha256,
+  readEnginePin,
+  selectUpdateTarget,
+  verifySha256,
+} from './engine';
 import { installHelper, removeRetired } from './helperInstall';
+import { HttpStatusError, downloadFile, fetchJson, fetchText } from './net';
 
 const HELPER_REPO = 'pypilot-dev/pypilot';
-const MIN_VERSION: [number, number, number] = [0, 1, 0];
+const MIN_VERSION: Version = [0, 1, 0];
 
-/** Idle timeouts for the two network calls below. `https` timeouts reset on
- *  activity, so a slow-but-moving download never trips them. */
-const API_TIMEOUT_MS = 15_000;
-const DOWNLOAD_TIMEOUT_MS = 120_000;
-/** Redirect chains are followed at most this many times before giving up. */
-const MAX_REDIRECTS = 5;
+/** Test-only: base URL of a local server laid out like GitHub releases
+ *  (`/releases/download/<tag>/<asset>`, `/api/releases/latest`). Honoured
+ *  only when the extension runs in test mode, so it can never redirect a
+ *  user's download. */
+export const TEST_RELEASES_ENV = 'PYPILOT_TEST_RELEASES_URL';
 
 /** How often (in ms) to suppress the "update available" prompt after the user
  *  dismisses it.  24 hours keeps it from being annoying.  */
@@ -40,39 +62,44 @@ const UPDATE_SNOOZE_MS = 24 * 60 * 60 * 1000;
 export interface HelperInfo {
   path: string;
   version: string;
+  /** True for the copy in the extension's storage (which updates replace). */
   managed: boolean;
+  /** Where it came from: PATH or managed storage. */
+  source: 'path' | 'managed';
 }
 
+type Log = (line: string) => void;
+
 /**
- * Ensure a working `pypilot` binary exists and return its path.
+ * Ensure a working `pypilot` binary exists and return it.
  * Shows a VS Code progress notification while downloading if needed.
  */
 export async function ensureHelper(
-  context: vscode.ExtensionContext
+  context: vscode.ExtensionContext,
+  log: Log = (line) => console.log(`PyPilot: ${line}`)
 ): Promise<HelperInfo> {
   // A helper replaced by an update stays on disk while the old language server
   // runs it; delete such leftovers now that nothing should be using them.
-  removeRetired(path.join(context.globalStorageUri.fsPath, 'bin'), helperBinName());
+  const binDir = managedBinDir(context);
+  removeRetired(binDir, helperBinName());
 
-  // Probe both PATH and managed locations, then pick the best one.
+  // 1. Probe both PATH and managed locations, then pick the newer one.
   let pathInfo: HelperInfo | undefined;
   let managedInfo: HelperInfo | undefined;
 
-  // 1. Check PATH.
   const onPath = which('pypilot');
   if (onPath) {
-    const ver = await probeVersion(onPath);
+    const ver = probeVersion(onPath);
     if (ver && compareVersions(ver, MIN_VERSION) >= 0) {
-      pathInfo = { path: onPath, version: fmtVersion(ver), managed: false };
+      pathInfo = { path: onPath, version: fmtVersion(ver), managed: false, source: 'path' };
     }
   }
 
-  // 2. Check previously-downloaded managed binary.
-  const managed = managedBinPath(context);
-  if (managed && fs.existsSync(managed)) {
-    const ver = await probeVersion(managed);
+  const managed = path.join(binDir, helperBinName());
+  if (fs.existsSync(managed)) {
+    const ver = probeVersion(managed);
     if (ver && compareVersions(ver, MIN_VERSION) >= 0) {
-      managedInfo = { path: managed, version: fmtVersion(ver), managed: true };
+      managedInfo = { path: managed, version: fmtVersion(ver), managed: true, source: 'managed' };
     } else {
       // Stale binary — remove it so a re-download can happen. `force` only
       // ignores ENOENT: a locked file (Windows EBUSY/EPERM) must not abort
@@ -80,35 +107,32 @@ export async function ensureHelper(
       try {
         fs.rmSync(managed, { force: true });
       } catch (err) {
-        console.warn(`PyPilot: could not remove the stale helper at ${managed}: ${err}`);
+        log(`could not remove the stale helper at ${managed}: ${err}`);
       }
     }
   }
 
-  // 3. Pick the newer of the two, if both exist.
   if (pathInfo && managedInfo) {
-    const pathVer = parseVersion(`pypilot ${pathInfo.version}`)!;
-    const managedVer = parseVersion(`pypilot ${managedInfo.version}`)!;
+    const pathVer = parseVersion(pathInfo.version)!;
+    const managedVer = parseVersion(managedInfo.version)!;
     return compareVersions(managedVer, pathVer) >= 0 ? managedInfo : pathInfo;
   }
   if (pathInfo) return pathInfo;
   if (managedInfo) return managedInfo;
 
-  // 4. Neither exists — download.
+  // 2. Neither exists — download the pinned engine.
+  const pin = enginePin(context);
   return vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: 'PyPilot',
-      cancellable: false,
-    },
+    { location: vscode.ProgressLocation.Notification, title: 'PyPilot', cancellable: false },
     async (progress) => {
-      progress.report({ message: 'Downloading helper binary…' });
-      const binPath = await downloadLatestHelper(context);
-      const ver = await probeVersion(binPath);
+      progress.report({ message: `Downloading the PyPilot engine v${pin.version}…` });
+      const binPath = await installEngineVersion(context, pin.version, binDir, log);
+      const ver = probeVersion(binPath);
       return {
         path: binPath,
-        version: ver ? fmtVersion(ver) : 'unknown',
+        version: ver ? fmtVersion(ver) : pin.version,
         managed: true,
+        source: 'managed' as const,
       };
     }
   );
@@ -119,45 +143,53 @@ export async function ensureHelper(
 // ---------------------------------------------------------------------------
 
 /**
- * Compare the currently-resolved helper against the latest GitHub release.
- * If an update is available, prompt the user.  Call this *after* the extension
- * has finished activating so it never blocks startup.
+ * Offer the engine version `pypilot.engineUpdates` allows when it is newer
+ * than `current`. Call this *after* activation so it never blocks startup.
+ * `manual` (the "Check for Helper Updates" command) ignores the snooze and
+ * also says when there is nothing to do.
  */
 export async function checkForHelperUpdate(
   context: vscode.ExtensionContext,
-  current: HelperInfo
+  current: HelperInfo,
+  options: { manual?: boolean } = {}
 ): Promise<void> {
+  const say = (msg: string) => {
+    if (options.manual) vscode.window.showInformationMessage(msg);
+  };
+
   // Honour a snooze — don't nag every single activation.
   const lastDismissed = context.globalState.get<number>('pypilot.updateDismissedAt', 0);
-  if (Date.now() - lastDismissed < UPDATE_SNOOZE_MS) {
+  if (!options.manual && Date.now() - lastDismissed < UPDATE_SNOOZE_MS) {
     return;
   }
 
-  let release: GithubRelease;
-  try {
-    release = await fetchJson<GithubRelease>(
-      `https://api.github.com/repos/${HELPER_REPO}/releases/latest`
-    );
-  } catch {
-    // Network offline — silently skip.
-    return;
-  }
-
-  const remoteVer = parseVersion(release.tag_name.replace(/^v/, 'pypilot '));
-  if (!remoteVer) return;
-
-  const localVer = parseVersion(`pypilot ${current.version}`);
+  const localVer = parseVersion(current.version);
   if (!localVer) return;
 
-  if (compareVersions(remoteVer, localVer) <= 0) {
-    // Already up to date.
-    return;
+  const pin = enginePin(context);
+  const pinnedVer = parseVersion(pin.version)!;
+  const policy = updatePolicy();
+
+  let latestVer: Version | undefined;
+  if (policy === 'latest') {
+    try {
+      const release = await fetchJson<GithubRelease>(`${endpoints(context).api}/latest`);
+      latestVer = parseVersion(release.tag_name ?? '');
+    } catch (err) {
+      // Offline or rate limited: the pin can still be offered.
+      console.warn(`PyPilot: could not look up the latest engine release: ${err}`);
+    }
   }
 
-  const remoteStr = fmtVersion(remoteVer);
+  const target = selectUpdateTarget(policy, localVer, pinnedVer, latestVer);
+  if (!target) {
+    say(`PyPilot: the helper (v${current.version}) is up to date.`);
+    return;
+  }
+  const targetStr = fmtVersion(target);
 
   const choice = await vscode.window.showInformationMessage(
-    `PyPilot: helper update available (${current.version} → ${remoteStr}).`,
+    `PyPilot: helper update available (${current.version} → ${targetStr}).`,
     'Update now',
     'Release notes',
     'Later'
@@ -167,25 +199,21 @@ export async function checkForHelperUpdate(
     let done: string;
     try {
       done = await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: 'PyPilot',
-          cancellable: false,
-        },
+        { location: vscode.ProgressLocation.Notification, title: 'PyPilot', cancellable: false },
         async (progress) => {
-          progress.report({ message: `Updating helper to v${remoteStr}…` });
+          progress.report({ message: `Updating helper to v${targetStr}…` });
 
           // Always into managed storage: a PATH install is the user's to
           // manage, and on the next activation the newer copy wins.
-          const binPath = await downloadLatestHelper(context);
+          const binPath = await installEngineVersion(context, targetStr, managedBinDir(context));
 
           // Only report success once the binary on disk really is the new
           // version. A replace that silently failed used to say "updated",
           // and the same prompt came back after every reload.
-          const ver = await probeVersion(binPath);
-          if (!ver || compareVersions(ver, remoteVer) < 0) {
+          const ver = probeVersion(binPath);
+          if (!ver || compareVersions(ver, target) < 0) {
             throw new Error(
-              `the helper at ${binPath} still reports ${ver ? fmtVersion(ver) : 'no version'} after installing v${remoteStr}`
+              `the helper at ${binPath} still reports ${ver ? fmtVersion(ver) : 'no version'} after installing v${targetStr}`
             );
           }
           return current.managed
@@ -194,7 +222,7 @@ export async function checkForHelperUpdate(
         }
       );
     } catch (err) {
-      vscode.window.showErrorMessage(`PyPilot: helper update failed: ${err}`);
+      vscode.window.showErrorMessage(`PyPilot: helper update failed: ${errorText(err)}`);
       return;
     }
 
@@ -209,7 +237,7 @@ export async function checkForHelperUpdate(
     }
   } else if (choice === 'Release notes') {
     vscode.env.openExternal(
-      vscode.Uri.parse(`https://github.com/${HELPER_REPO}/releases/latest`)
+      vscode.Uri.parse(`https://github.com/${HELPER_REPO}/releases/tag/v${targetStr}`)
     );
   } else {
     // "Later" or dismissed — snooze for 24h.
@@ -217,106 +245,128 @@ export async function checkForHelperUpdate(
   }
 }
 
-// --- internals ---------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Download + verify + install
+// ---------------------------------------------------------------------------
 
-function helperBinName(): string {
-  return process.platform === 'win32' ? 'pypilot.exe' : 'pypilot';
-}
-
-function managedBinPath(context: vscode.ExtensionContext): string | undefined {
-  return path.join(context.globalStorageUri.fsPath, 'bin', helperBinName());
-}
-
-async function downloadLatestHelper(
-  context: vscode.ExtensionContext
+/**
+ * Download engine `version` for this platform, verify its SHA-256 and
+ * install it as `<binDir>/pypilot[.exe]`. Nothing is extracted unless the
+ * archive matches: the pin for the pinned version, otherwise the release's
+ * SHA256SUMS. Returns the installed path.
+ */
+export async function installEngineVersion(
+  context: vscode.ExtensionContext,
+  version: string,
+  binDir: string,
+  log: Log = (line) => console.log(`PyPilot: ${line}`)
 ): Promise<string> {
-  const asset = assetForPlatform();
-  const releaseUrl = `https://api.github.com/repos/${HELPER_REPO}/releases/latest`;
-
-  const release = await fetchJson<GithubRelease>(releaseUrl);
-  // A rate-limited or truncated API response has no `assets` array at all;
-  // say so instead of throwing "Cannot read properties of undefined".
-  const assetEntry = (release.assets ?? []).find((a) => a.name === asset.fileName);
-  if (!assetEntry) {
+  const asset = assetForPlatform(process.platform, process.arch);
+  if (!asset) {
     throw new Error(
-      `No PyPilot helper asset "${asset.fileName}" found in the latest release.`
+      `PyPilot has no engine build for ${process.platform}/${process.arch}. ` +
+        'Build it from source (cargo install --path helper) and put it on PATH.'
     );
   }
+  const { download } = endpoints(context);
+  const tagUrl = `${download}/v${version}`;
 
-  const dir = path.join(context.globalStorageUri.fsPath, 'bin');
-  fs.mkdirSync(dir, { recursive: true });
+  let expected = pinnedSha256(enginePin(context), version, asset);
+  let source = 'the pin in package.json';
+  if (!expected) {
+    expected = await sha256FromSums(`${tagUrl}/${SHA256SUMS_ASSET}`, version, asset);
+    source = `${SHA256SUMS_ASSET} of v${version}`;
+  }
 
-  const archive = path.join(dir, asset.fileName);
-  await downloadFile(assetEntry.browser_download_url, archive);
+  fs.mkdirSync(binDir, { recursive: true });
+  const archive = path.join(binDir, `.download-${asset}`);
   try {
+    await downloadFile(`${tagUrl}/${asset}`, archive);
+    // Deletes the archive and throws on mismatch: nothing below runs.
+    await verifySha256(archive, asset, expected);
+    log(`verified ${asset} v${version} against ${source} (sha256 ${expected})`);
     // Never unpacks over the current binary: that is usually the one the
     // language server is running, which Windows will not let us replace.
-    return installHelper(archive, asset.fileName, dir, helperBinName());
+    return installHelper(archive, asset, binDir, helperBinName());
   } finally {
     fs.rmSync(archive, { force: true });
   }
 }
 
-function assetForPlatform(): { fileName: string } {
-  const { platform, arch } = process;
-  let slug: string;
-
-  if (platform === 'linux' && arch === 'x64') {
-    slug = 'linux-x64';
-  } else if (platform === 'linux' && arch === 'arm64') {
-    slug = 'linux-arm64';
-  } else if (platform === 'darwin' && arch === 'x64') {
-    slug = 'darwin-x64';
-  } else if (platform === 'darwin' && arch === 'arm64') {
-    slug = 'darwin-arm64';
-  } else if (platform === 'win32' && arch === 'x64') {
-    slug = 'windows-x64';
-  } else {
-    throw new Error(`Unsupported platform for PyPilot helper: ${platform}/${arch}`);
+/** The expected SHA-256 of `asset` from a release's SHA256SUMS. Releases
+ *  without one (engine v1.2.2 and older) are refused: there is nothing to
+ *  verify them against, and pinned versions never get here. */
+async function sha256FromSums(url: string, version: string, asset: string): Promise<string> {
+  let text: string;
+  try {
+    text = await fetchText(url);
+  } catch (err) {
+    if (err instanceof HttpStatusError && err.status === 404) {
+      throw new Error(
+        `engine v${version} has no ${SHA256SUMS_ASSET} file, so its download cannot be verified and was not installed. ` +
+          'Set pypilot.engineUpdates to "pinned" to use the version this extension ships with, ' +
+          'or install pypilot yourself and put it on PATH.'
+      );
+    }
+    throw err;
   }
-
-  const ext = platform === 'win32' ? 'zip' : 'tar.gz';
-  return { fileName: `pypilot-${slug}.${ext}` };
+  const hex = parseSha256Sums(text).get(asset);
+  if (!hex) {
+    throw new Error(`${SHA256SUMS_ASSET} of engine v${version} lists no checksum for ${asset}; nothing was installed.`);
+  }
+  return hex;
 }
 
-/** Probe `<path> --version` and return parsed semver, or undefined. */
-async function probeVersion(
-  binPath: string
-): Promise<[number, number, number] | undefined> {
+// --- internals ---------------------------------------------------------------
+
+function endpoints(context: vscode.ExtensionContext): { download: string; api: string } {
+  const testBase = process.env[TEST_RELEASES_ENV];
+  if (testBase && context.extensionMode === vscode.ExtensionMode.Test) {
+    const base = testBase.replace(/\/+$/, '');
+    return { download: `${base}/releases/download`, api: `${base}/api/releases` };
+  }
+  return {
+    download: `https://github.com/${HELPER_REPO}/releases/download`,
+    api: `https://api.github.com/repos/${HELPER_REPO}/releases`,
+  };
+}
+
+function enginePin(context: vscode.ExtensionContext): EnginePin {
+  return readEnginePin(context.extension.packageJSON);
+}
+
+function updatePolicy(): EngineUpdatePolicy {
+  const value = vscode.workspace.getConfiguration('pypilot').get<string>('engineUpdates', 'pinned');
+  return value === 'latest' ? 'latest' : 'pinned';
+}
+
+function helperBinName(): string {
+  return process.platform === 'win32' ? 'pypilot.exe' : 'pypilot';
+}
+
+function managedBinDir(context: vscode.ExtensionContext): string {
+  return path.join(context.globalStorageUri.fsPath, 'bin');
+}
+
+/** Probe `<path> --version` and return the parsed version, or undefined. */
+function probeVersion(binPath: string): Version | undefined {
   try {
-    const out = execFileSync(binPath, ['--version'], { encoding: 'utf8', timeout: 5000 });
+    const out = execFileSync(binPath, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
     return parseVersion(out.trim());
   } catch {
     return undefined;
   }
 }
 
-function parseVersion(out: string): [number, number, number] | undefined {
-  // "pypilot 0.1.0"
-  const m = out.match(/pypilot\s+(\d+)\.(\d+)\.(\d+)/);
-  if (!m) return undefined;
-  return [parseInt(m[1]), parseInt(m[2]), parseInt(m[3])];
-}
-
-function fmtVersion([ma, mi, pa]: [number, number, number]): string {
-  return `${ma}.${mi}.${pa}`;
-}
-
-function compareVersions(
-  a: [number, number, number],
-  b: [number, number, number]
-): number {
-  for (let i = 0; i < 3; i++) {
-    if (a[i] !== b[i]) return a[i] - b[i];
-  }
-  return 0;
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** Cross-platform `which`. */
 function which(name: string): string | undefined {
   try {
     const cmd = process.platform === 'win32' ? 'where' : 'which';
-    const out = execFileSync(cmd, [name], { encoding: 'utf8', timeout: 3000 });
+    const out = execFileSync(cmd, [name], { encoding: 'utf8', timeout: 3000, windowsHide: true });
     const found = out.trim().split(/\r?\n/)[0];
     if (found) return found;
   } catch {
@@ -324,9 +374,8 @@ function which(name: string): string | undefined {
   }
 
   // Fallback: check ~/.cargo/bin in case PATH was not inherited by VS Code GUI
-  const homedir = os.homedir();
   const binName = process.platform === 'win32' ? `${name}.exe` : name;
-  const cargoBin = path.join(homedir, '.cargo', 'bin', binName);
+  const cargoBin = path.join(os.homedir(), '.cargo', 'bin', binName);
   if (fs.existsSync(cargoBin)) {
     return cargoBin;
   }
@@ -334,150 +383,9 @@ function which(name: string): string | undefined {
   return undefined;
 }
 
-function fetchJson<T>(url: string, redirectsLeft = MAX_REDIRECTS): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const request = https.get(
-      url,
-      {
-        headers: {
-          'User-Agent': 'pypilot-vscode',
-          Accept: 'application/vnd.github+json',
-        },
-      },
-      (res) => {
-        const status = res.statusCode ?? 0;
-
-        // Follow redirects (the API answers 302, asset URLs 307/308).
-        if (status >= 300 && status < 400 && res.headers.location) {
-          res.resume();
-          request.destroy();
-          if (redirectsLeft <= 0) {
-            reject(new Error(`Too many redirects while requesting ${url}`));
-            return;
-          }
-          fetchJson<T>(new URL(res.headers.location, url).toString(), redirectsLeft - 1).then(
-            resolve,
-            reject
-          );
-          return;
-        }
-
-        // Without this check a 403/404 body is parsed as if it were the
-        // release JSON, and the caller fails much later with a confusing
-        // "Cannot read properties of undefined".
-        if (status < 200 || status >= 300) {
-          res.resume();
-          reject(new Error(httpError(status, url)));
-          return;
-        }
-
-        let body = '';
-        res.setEncoding('utf8');
-        res.on('data', (d) => (body += d));
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(body) as T);
-          } catch (e) {
-            reject(new Error(`Could not parse the response from ${url}: ${e}`));
-          }
-        });
-      }
-    );
-
-    request.setTimeout(API_TIMEOUT_MS, () => {
-      request.destroy(new Error(`Request to ${url} timed out after ${API_TIMEOUT_MS}ms`));
-    });
-    request.on('error', reject);
-  });
-}
-
-/** HTTP status → an error a person can act on. Rate limiting is the common
- *  case: unauthenticated GitHub API calls are capped at 60 per hour. */
-function httpError(status: number, url: string): string {
-  const hint =
-    status === 403 || status === 429 ? ' (GitHub rate limit reached — try again later)' : '';
-  return `Request to ${url} failed with HTTP ${status}${hint}`;
-}
-
-function downloadFile(url: string, dest: string, redirectsLeft = MAX_REDIRECTS): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    let settled = false;
-
-    // Clean up the partial file so a retry starts from scratch.
-    const fail = (err: Error): void => {
-      if (settled) return;
-      settled = true;
-      file.close(() => {
-        fs.rmSync(dest, { force: true });
-        reject(err);
-      });
-    };
-
-    const request = https.get(url, { headers: { 'User-Agent': 'pypilot-vscode' } }, (res) => {
-      const status = res.statusCode ?? 0;
-
-      if (status >= 300 && status < 400 && res.headers.location) {
-        // Captured here: TypeScript drops the narrowing inside the callback.
-        const location = res.headers.location;
-        res.resume();
-        file.close(() => {
-          fs.rmSync(dest, { force: true });
-          if (redirectsLeft <= 0) {
-            reject(new Error(`Too many redirects while downloading ${url}`));
-            return;
-          }
-          downloadFile(
-            new URL(location, url).toString(),
-            dest,
-            redirectsLeft - 1
-          ).then(resolve, reject);
-        });
-        return;
-      }
-
-      // An error page must never be written to disk as if it were the binary:
-      // extraction would then fail with an unrelated archive error.
-      if (status < 200 || status >= 300) {
-        res.resume();
-        fail(new Error(httpError(status, url)));
-        return;
-      }
-
-      res.pipe(file);
-      file.on('finish', () =>
-        file.close((err) => {
-          if (settled) return;
-          settled = true;
-          if (err) {
-            reject(err);
-            return;
-          }
-          resolve();
-        })
-      );
-    });
-
-    request.setTimeout(DOWNLOAD_TIMEOUT_MS, () => {
-      request.destroy(
-        new Error(`Download of ${url} timed out after ${DOWNLOAD_TIMEOUT_MS}ms of inactivity`)
-      );
-    });
-    request.on('error', fail);
-    file.on('error', fail);
-  });
-}
-
-
 // --- GitHub API types --------------------------------------------------------
 
 interface GithubRelease {
-  tag_name: string;
   /** Absent on rate-limited or malformed responses. */
-  assets?: GithubAsset[];
-}
-
-interface GithubAsset {
-  name: string;
-  browser_download_url: string;
+  tag_name?: string;
 }

@@ -501,7 +501,7 @@ export function registerCommands(
     await context.globalState.update("pypilot.updateDismissedAt", 0);
     try {
       const info = await ensureHelper(context);
-      await checkForHelperUpdate(context, info);
+      await checkForHelperUpdate(context, info, { manual: true });
     } catch (err) {
       vscode.window.showErrorMessage(`PyPilot: update check failed. ${err}`);
     }
