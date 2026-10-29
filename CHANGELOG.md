@@ -5,7 +5,7 @@
 ### Security
 
 - The engine is pinned: the extension installs the version named in
-  `package.json` (`pypilotEngine`, currently 1.2.2) instead of whatever is
+  `package.json` (`pypilotEngine`, currently 1.3.0) instead of whatever is
   latest, and checks every download's SHA-256 before extracting it (the pin
   for the pinned version, the release's `SHA256SUMS` otherwise). Mismatches
   and releases without checksums install nothing.
