@@ -1,0 +1,6 @@
+# GitHub Linguist: documentation is left out of the repository's language
+# statistics. This only changes GitHub's language breakdown; the files stay
+# tracked and unchanged.
+docs/** linguist-documentation
+media/walkthrough/** linguist-documentation
+*.md linguist-documentation
