@@ -46,33 +46,49 @@ export class PyPilotTaskProvider implements vscode.TaskProvider {
   constructor(private readonly helperPath: string = "pypilot") {}
 
   provideTasks(): vscode.Task[] {
-    return PREDEFINED_TASKS.map((def) => buildTask(def, this.helperPath));
+    // `${workspaceFolder}` cannot be resolved in a multi-root window, so
+    // there every folder gets its own set of tasks, run in that folder.
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    if (folders.length <= 1) {
+      return PREDEFINED_TASKS.map((def) => buildTask(def, this.helperPath));
+    }
+    return folders.flatMap((folder) =>
+      PREDEFINED_TASKS.map((def) => buildTask(def, this.helperPath, folder))
+    );
   }
 
   resolveTask(task: vscode.Task): vscode.Task | undefined {
     const def = task.definition as PyPilotTaskDefinition;
     if (def.type === PyPilotTaskProvider.taskType && def.task) {
-      return buildTask(def, this.helperPath);
+      const scope = task.scope;
+      const folder = typeof scope === "object" && scope !== null && "uri" in scope ? scope : undefined;
+      return buildTask(def, this.helperPath, folder);
     }
     return undefined;
   }
 }
 
-function buildTask(def: PyPilotTaskDefinition, helperPath: string): vscode.Task {
+function buildTask(
+  def: PyPilotTaskDefinition,
+  helperPath: string,
+  folder?: vscode.WorkspaceFolder
+): vscode.Task {
   const args = def.task.split(" ");
   if (def.package) {
     args.push(def.package);
   }
 
   const shellExec = new vscode.ShellExecution(helperPath, args, {
-    // Use the workspace root so `pypilot` picks up the project's config.
-    cwd: "${workspaceFolder}",
+    // Use the project root so `pypilot` picks up the project's config.
+    cwd: folder ? folder.uri.fsPath : "${workspaceFolder}",
   });
 
+  const label = TASK_LABELS[def.task] ?? `pypilot ${def.task}`;
   const task = new vscode.Task(
     def,
-    vscode.TaskScope.Workspace,
-    TASK_LABELS[def.task] ?? `pypilot ${def.task}`,
+    folder ?? vscode.TaskScope.Workspace,
+    // VS Code shows the folder next to folder-scoped tasks already.
+    label,
     "PyPilot",
     shellExec,
     // Problem matchers: none needed (PyPilot speaks LSP diagnostics directly).

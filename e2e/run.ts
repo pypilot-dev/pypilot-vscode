@@ -86,14 +86,6 @@ const server = Bun.serve({
 });
 
 const profile = join(scratch, "profile");
-// "all" notifications is what registers the command that opens the report
-// webview (pypilot.openReport itself opens the doctor's markdown report).
-mkdirSync(join(profile, "user", "User"), { recursive: true });
-writeFileSync(
-  join(profile, "user", "User", "settings.json"),
-  `${JSON.stringify({ "pypilot.notifications": "all" }, null, 2)}
-`,
-);
 const logFile = join(scratch, "e2e.log");
 
 // PYPILOT_E2E_FRESH=1 hides any installed pypilot (PATH and ~/.cargo/bin)

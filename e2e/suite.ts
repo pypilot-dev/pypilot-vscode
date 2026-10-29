@@ -81,14 +81,30 @@ async function steps(): Promise<void> {
     log(`[e2e] activation downloaded and verified the pinned engine v${pin}`);
   }
 
-  // ── every contributed command is registered ─────────────────────────────
+  // ── one language client for the single-folder workspace ─────────────────
+  const clients = await waitFor("a running language client", () => {
+    const all = api.clients();
+    return all.length > 0 && all.every((c) => c.running) ? all : undefined;
+  });
+  check(clients.length === 1, `expected 1 language client, got ${clients.length}`);
+  log(`[e2e] one language client running, for folder "${clients[0].folder}"`);
+
+  // ── every command is registered, and only once ──────────────────────────
+  // Server-advertised commands (pypilot.fixEverything, ...) are routed by
+  // the client manager; a second registration would throw or duplicate.
   const contributed: string[] = (extension.packageJSON.contributes?.commands ?? []).map(
     (c: { command: string }) => c.command,
   );
-  const registered = new Set(await vscode.commands.getCommands(true));
-  const missing = contributed.filter((id) => !registered.has(id));
+  const ids = await vscode.commands.getCommands(true);
+  const counts = new Map<string, number>();
+  for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const missing = contributed.filter((id) => !counts.has(id));
   check(missing.length === 0, `contributed but not registered: ${missing.join(", ")}`);
-  log(`[e2e] all ${contributed.length} contributed commands are registered`);
+  const ours = [...counts.keys()].filter((id) => id.startsWith("pypilot."));
+  const twice = ours.filter((id) => (counts.get(id) ?? 0) > 1);
+  check(twice.length === 0, `registered more than once: ${twice.join(", ")}`);
+  check(counts.has("pypilot.fixEverything"), "the server's pypilot.fixEverything command is not registered");
+  log(`[e2e] all ${contributed.length} contributed commands registered; ${ours.length} pypilot.* ids, none twice`);
 
   // ── downloads: only verified archives are installed ─────────────────────
   const scratch = process.env.PYPILOT_E2E_SCRATCH;
@@ -134,13 +150,9 @@ async function steps(): Promise<void> {
   log(`[e2e] a tampered archive for the pinned v${pinned} was refused against the package.json hash`);
 
   // ── report panel ────────────────────────────────────────────────────────
-  // The webview is reachable through this internal command, registered a few
-  // seconds after activation when pypilot.notifications is "all" (run.ts sets
-  // it); "PyPilot: Open Environment Report Panel" opens the doctor's markdown.
-  await waitFor("the internal report command", async () =>
-    (await vscode.commands.getCommands(true)).includes("pypilot._openReportInternal") ? true : undefined,
-  );
-  await vscode.commands.executeCommand("pypilot._openReportInternal");
+  // "PyPilot: Open Environment Report Panel" scans with the real engine and
+  // renders the server's report in the webview.
+  await vscode.commands.executeCommand("pypilot.openReport");
   const tab = await waitFor("the report panel", () =>
     vscode.window.tabGroups.all
       .flatMap((g) => g.tabs)

@@ -18,7 +18,7 @@ describe("report panel HTML", () => {
   const md = "# Report\n\n### Error: bad <script>alert(1)</script>\n\nDetail with `code`.\n";
 
   test("scripts are allowed by nonce only, never unsafe-inline", () => {
-    const html = buildHtml(md);
+    const html = buildHtml(md, { mode: "panel" });
     const policy = csp(html);
     expect(policy.get("default-src")).toEqual(["'none'"]);
     const scriptSrc = policy.get("script-src") ?? [];
@@ -37,12 +37,19 @@ describe("report panel HTML", () => {
   });
 
   test("a new nonce on every render", () => {
-    const nonces = new Set(Array.from({ length: 5 }, () => csp(buildHtml(md)).get("script-src")?.[0]));
+    const nonces = new Set(Array.from({ length: 5 }, () => csp(buildHtml(md, { mode: "panel" })).get("script-src")?.[0]));
     expect(nonces.size).toBe(5);
   });
 
+  test("the exported page has no scripts and no script-src", () => {
+    const html = buildHtml(md, { mode: "export" });
+    expect(csp(html).has("script-src")).toBe(false);
+    expect(html).not.toContain("<script");
+    expect(html).not.toMatch(/\son[a-z]+\s*=/i);
+  });
+
   test("report content is escaped", () => {
-    const html = buildHtml(md);
+    const html = buildHtml(md, { mode: "panel" });
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).not.toContain("<script>alert(1)");
   });
