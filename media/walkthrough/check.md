@@ -9,4 +9,8 @@ machine:
 - imports in open files that the environment cannot satisfy.
 
 Problems show up as a notification with buttons, and as squiggles with
-quick fixes in the editor. The full picture is in the doctor report.
+quick fixes in the editor. The full picture is in the doctor report. Its
+panel can copy the report as Markdown or save it as an HTML file to share.
+
+Hover the PyPilot status bar item to see the Python version, environment
+path and package manager in use.

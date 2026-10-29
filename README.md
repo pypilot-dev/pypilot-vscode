@@ -26,9 +26,11 @@ This extension runs the same native Rust engine as [PyPilot for Zed](https://git
 - **Hardware matching**: Inspects host NVIDIA drivers via `nvidia-smi` and aligns `torch` or `tensorflow` with the correct CUDA runtime wheel.
 - **Import diagnostics**: Flags missing or incompatible package imports in open files, with quick fixes to install or resolve them.
 - **Onboarding prompt**: Scans opened folders and displays an actionable alert when environment issues need attention.
-- **Status bar**: Displays interpreter state in the status bar with quick access to the report panel.
+- **Status bar**: Displays the environment state with quick access to the report. Its tooltip shows the Python version, the environment path, the package manager PyPilot uses (`uv`, `uv-pip`, `pip` or `pixi`) and, in pixi projects, the pixi environment, read from files on disk without starting any process.
 - **Task integration**: Provides workspace task definitions for environment bootstrap, health checks, and package maintenance.
-- **Report panel**: Renders the doctor diagnostics report in an interactive webview panel.
+- **Report panel**: Renders the doctor report in an interactive webview panel with fix buttons, **Copy as Markdown** and **Save as HTML** (a standalone page with inline styles in your current theme colors, no scripts).
+- **Multi-root workspaces**: Each workspace folder with a Python project gets its own language server, settings and interpreter selection (see below).
+- **Relevant commands only**: Project-specific commands are hidden from the Command Palette where they cannot apply (see the table below).
 
 ## Requirements
 
@@ -53,22 +55,36 @@ A folder with a `pixi.toml`, or a `pyproject.toml` with `[tool.pixi.workspace]`,
 - PyPilot never creates a `.venv` there and never touches `pixi.lock`.
 - Package installs go through `pixi add --pypi`.
 
+## Multi-root workspaces
+
+In a window with several folders, PyPilot runs one language server per folder that holds a Python project (a `pyproject.toml`, `requirements.txt`, `pixi.toml`, `environment.yml`, `setup.py`, `setup.cfg`, `Pipfile`, or any `.py` / `.ipynb` file). A folder without one gets a server as soon as you open a Python file from it.
+
+- Each server checks only its own folder's files and uses that folder's settings (`pypilot.*` settings can differ per folder) and environment. Interpreter selection (`pypilot.autoSelectVenv`) works per folder too.
+- Commands act on the folder of the active editor. With no editor open, PyPilot asks which folder to use. Quick fixes in the editor go to the server of the file's folder.
+- A folder nested inside another workspace folder is handled by the outer one.
+- Tasks (**Tasks: Run Task**) are listed per folder.
+- Each server checks its folder on startup, so you may see one notification per folder.
+
+A single-folder window works as before: one server, which also checks Python files opened from outside the folder.
+
 ## Commands
+
+Commands marked "Only when..." are hidden from the Command Palette in workspaces where they do not apply. They still run from the walkthrough, keybindings and the report panel.
 
 | Command | Action |
 |---|---|
 | `PyPilot: Set Up Environment` | Bootstraps the environment, installs Python if needed, and installs dependencies |
-| `PyPilot: Doctor: Show Environment Report` | Runs a health check and displays the interactive report panel |
+| `PyPilot: Doctor: Show Environment Report` | Runs a health check and opens the report as a Markdown document (its editor title button opens it in the report panel) |
 | `PyPilot: Fix Python Version` | Recalculates compatible versions and rebuilds the virtual environment |
-| `PyPilot: Fix CUDA / PyTorch Build` | Re-pins machine learning dependencies to the driver-supported build |
+| `PyPilot: Fix CUDA / PyTorch Build` | Re-pins machine learning dependencies to the driver-supported build. Only when a manifest (`pyproject.toml`, `requirements*.txt`, `pixi.toml`, `environment.yml`) names `torch` or `tensorflow` |
 | `PyPilot: Check Package Compatibility...` | Checks whether a specific package runs on the current Python version |
 | `PyPilot: Install Package...` | Installs a package and updates the project manifest |
 | `PyPilot: Update Bundled Data Tables` | Updates cached hardware and framework compatibility data |
-| `PyPilot: Migrate Conda environment.yml to pyproject.toml` | Translates conda environment definitions into pyproject.toml |
-| `PyPilot: Open Environment Report Panel` | Runs the health check and opens the environment report |
+| `PyPilot: Migrate Conda environment.yml to pyproject.toml` | Translates conda environment definitions into pyproject.toml. Only when an `environment.yml` (or `.yaml`) exists |
+| `PyPilot: Open Environment Report Panel` | Runs the health check and shows the report in the webview panel, with fix buttons, **Copy as Markdown** and **Save as HTML** |
 | `PyPilot: Install uv Globally` | Installs `uv` so it is available outside this workspace |
-| `PyPilot: Install pixi` | Installs [pixi](https://pixi.sh) with its official installer |
-| `PyPilot: Initialize pixi project` | Shows the `pixi.toml` PyPilot would write for this project, then writes it (optionally running `pixi install`) only after you confirm |
+| `PyPilot: Install pixi` | Installs [pixi](https://pixi.sh) with its official installer. Only when pixi is not found on `PATH` or in `~/.pixi/bin` |
+| `PyPilot: Initialize pixi project` | Shows the `pixi.toml` PyPilot would write for this project, then writes it (optionally running `pixi install`) only after you confirm. Only when a folder is not a pixi project yet |
 | `PyPilot: Check for Helper Updates` | Compares the installed helper against the latest GitHub release |
 | `PyPilot: Use Project Environment (.venv / pixi)` | Makes the workspace's `.venv` (or the pixi environment set in `pypilot.pixiEnvironment`) the active Python interpreter |
 
@@ -81,23 +97,29 @@ A folder with a `pixi.toml`, or a `pyproject.toml` with `[tool.pixi.workspace]`,
 | `pypilot.autoCheckOnOpen` | `true` | Automatically checks the environment when opening a workspace. |
 | `pypilot.autoSelectVenv` | `true` | Makes the workspace's `.venv` the active Python interpreter when it is created or changed, and on startup when no interpreter inside the workspace is selected. pixi projects (`pixi.toml`, or `[tool.pixi.workspace]` in `pyproject.toml`) are supported: the environment named by `pypilot.pixiEnvironment` (`.pixi/envs/<name>`) is selected after `pixi install`, and no `.venv` is used. |
 | `pypilot.pixiEnvironment` | `"default"` | Which pixi environment PyPilot and the interpreter selection use in multi-environment pixi projects (for example `cuda`). Install it with `pixi install -e <name>`. Ignored outside pixi projects. |
+| `pypilot.diagnosticsScope` | `"openFiles"` | `openFiles` checks imports only in open files. `workspace` also scans every Python file in the background, so the Problems panel lists problems in files you have not opened. Needs a helper that supports it; older helpers keep checking open files only. |
 | `pypilot.dataRefreshDays` | `7` | Refresh interval in days for compatibility data tables (0 disables updates). |
 
 ## Architecture
 
 The extension is a TypeScript client wrapping the native Rust `pypilot` helper binary. On startup, the extension checks PATH for an existing binary and downloads a release if none is found. The helper communicates over standard I/O via the Language Server Protocol.
 
+Settings reach the helper two ways: `initializationOptions` at startup (`pixiEnvironment`, `diagnosticsScope`) and the whole `pypilot` settings section through `workspace/didChangeConfiguration` (`settings.pypilot.<key>`), sent once after startup and on every change. In multi-root windows both are read for the server's folder.
+
 ```
 pypilot-vscode/
 ├── src/
-│   ├── extension.ts        LanguageClient activation and onboarding flow
+│   ├── extension.ts        Activation and onboarding flow
+│   ├── clients.ts          One language client per workspace folder, server command routing
 │   ├── downloader.ts       Binary resolution and release downloads
-│   ├── statusBar.ts        Editor status bar indicator
+│   ├── statusBar.ts        Status bar indicator and environment tooltip
 │   ├── commands.ts         Command palette actions
+│   ├── project.ts          File-based project checks and the palette context keys
+│   ├── report.ts           Feeds the server's report Markdown to the report panel
 │   ├── tasks.ts            Workspace task provider
 │   ├── venv.ts             .venv / pixi env auto-selection via the Python extension APIs
 │   └── webview/
-│       └── reportPanel.ts  Interactive HTML doctor report webview
+│       └── reportPanel.ts  Doctor report webview, Markdown copy and HTML export
 ├── build.ts                Bun build script
 ├── bunfig.toml
 └── package.json
