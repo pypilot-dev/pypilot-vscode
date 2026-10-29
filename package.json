@@ -108,12 +108,13 @@
       "properties": {
         "pypilot.packageManager": {
           "type": "string",
-          "enum": ["auto", "uv", "uv-pip", "pip"],
+          "enum": ["auto", "uv", "uv-pip", "pip", "pixi"],
           "enumDescriptions": [
-            "Auto (default): Uses uv if installed on system PATH, prompts to install if missing, or falls back to pip.",
+            "Auto (default): Uses uv if installed on system PATH, prompts to install if missing, or falls back to pip. pixi projects (pixi.toml, or [tool.pixi.workspace] in pyproject.toml) always use pixi.",
             "Use uv project mode (pyproject.toml + uv.lock).",
             "Use uv-accelerated pip-compatible mode (requirements.txt only via uv venv and uv pip).",
-            "Use standard pip + python -m venv. Never touches uv."
+            "Use standard pip + python -m venv. Never touches uv.",
+            "Use pixi: the environment lives in .pixi/envs/<name> (see pypilot.pixiEnvironment), installs go through `pixi add --pypi`, and PyPilot never creates a .venv or edits pixi.lock."
           ],
           "default": "auto",
           "description": "Package manager for environment creation and installs.",
