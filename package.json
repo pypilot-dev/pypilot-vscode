@@ -139,7 +139,15 @@
         "pypilot.autoSelectVenv": {
           "type": "boolean",
           "default": true,
-          "description": "Make the workspace's .venv (in pixi projects: the pixi default environment, .pixi/envs/default) the active Python interpreter (and so the recommended notebook kernel) when it is created or changed, and on startup when no interpreter inside the workspace is selected. Requires the Python extension. The \"PyPilot: Use Project Environment\" command works regardless of this setting.",
+          "description": "Make the workspace's .venv (in pixi projects: the pixi environment named by pypilot.pixiEnvironment, .pixi/envs/<name>) the active Python interpreter (and so the recommended notebook kernel) when it is created or changed, and on startup when no interpreter inside the workspace is selected. Requires the Python extension. The \"PyPilot: Use Project Environment\" command works regardless of this setting.",
+          "scope": "resource"
+        },
+        "pypilot.pixiEnvironment": {
+          "type": "string",
+          "default": "default",
+          "pattern": "^[a-z0-9-]+$",
+          "patternErrorMessage": "pixi environment names use lowercase letters, digits and dashes.",
+          "markdownDescription": "Which pixi environment PyPilot and the interpreter selection use in multi-environment pixi projects (the `[environments]` table of `pixi.toml`). The interpreter is `.pixi/envs/<name>`; install it with `pixi install -e <name>`. Ignored outside pixi projects.",
           "scope": "resource"
         },
         "pypilot.dataRefreshDays": {
