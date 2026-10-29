@@ -1,0 +1,56 @@
+name: Environment problem
+description: PyPilot set up, diagnosed or fixed your Python environment wrongly, or the engine would not start
+labels: ["environment"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The doctor output below tells us what PyPilot saw on your machine;
+        please paste it in full (it contains no secrets, but check it before posting).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What went wrong
+      description: What you did, what PyPilot did, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `pypilot doctor --json`
+      description: |
+        Run it in the project folder. If `pypilot` is not on your PATH, use the engine the extension
+        downloaded: its path is in the "PyPilot" output channel (line starting with `[engine] using`).
+        Engines without `--json` (v1.2.x and older) print the text report instead; paste that.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: extension-version
+    attributes:
+      label: Extension version
+      description: Extensions view → PyPilot, or `code --list-extensions --show-versions | grep pypilot`.
+      placeholder: "1.2.1"
+    validations:
+      required: true
+  - type: input
+    id: engine-version
+    attributes:
+      label: Engine version
+      description: Output of `pypilot --version` (or the `[engine] using ... vX.Y.Z` line in the PyPilot output channel), and whether it came from PATH, the download or `pypilot.helperPath`.
+      placeholder: "pypilot 1.2.2 (managed download)"
+    validations:
+      required: true
+  - type: input
+    id: editor
+    attributes:
+      label: Editor and OS
+      placeholder: "VS Code 1.95, Windows 11 x64"
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: PyPilot output channel (optional)
+      description: View → Output → "PyPilot".
+      render: text
