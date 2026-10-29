@@ -18,7 +18,7 @@
 
 import * as vscode from "vscode";
 
-import { ensureHelper, checkForHelperUpdate } from "./downloader";
+import { ensureHelper, checkForHelperUpdate, installEngineVersion, type HelperInfo } from "./downloader";
 import { PyPilotStatusBar } from "./statusBar";
 import { registerCommands } from "./commands";
 import { PyPilotTaskProvider } from "./tasks";
@@ -31,7 +31,27 @@ import { ReportRouter } from "./report";
 let clients: ClientManager | undefined;
 let statusBar: PyPilotStatusBar | undefined;
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+/** What `activate` returns when VS Code runs the extension's tests
+ *  (`ExtensionMode.Test`, see e2e/); nothing in normal use. */
+export interface PyPilotTestApi {
+  helper(): HelperInfo | undefined;
+  /** One entry per language client (one per workspace folder with a project). */
+  clients(): { folder: string | undefined; running: boolean }[];
+  installEngineVersion(version: string, binDir: string): Promise<string>;
+}
+
+export async function activate(context: vscode.ExtensionContext): Promise<PyPilotTestApi | undefined> {
+  let helperInfo: HelperInfo | undefined;
+  const testApi: PyPilotTestApi | undefined =
+    context.extensionMode === vscode.ExtensionMode.Test
+      ? {
+          helper: () => helperInfo,
+          clients: () =>
+            (clients?.all() ?? []).map((fc) => ({ folder: fc.folder?.name, running: fc.client.isRunning() })),
+          installEngineVersion: (version, binDir) => installEngineVersion(context, version, binDir),
+        }
+      : undefined;
+
   // ── 0. Project environment selection (.venv or pixi) ─────────────────────
   // Registered first because it only talks to the Python extensions: it must
   // keep working even if the helper binary cannot be found below.
@@ -46,19 +66,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
   // ── 2. Resolve the helper binary ─────────────────────────────────────────
+  // One "PyPilot" output channel for both the engine lookup (which helper,
+  // verified downloads) and the language clients below.
+  const output = vscode.window.createOutputChannel("PyPilot");
+  context.subscriptions.push(output);
+  const log = (line: string) => output.appendLine(`[engine] ${line}`);
+
   let helperPath: string;
-  let helperInfo: Awaited<ReturnType<typeof ensureHelper>> | undefined;
   try {
-    helperInfo = await ensureHelper(context);
+    helperInfo = await ensureHelper(context, log);
     helperPath = helperInfo.path;
-    console.log(`PyPilot: using helper ${helperInfo.path} v${helperInfo.version} (managed=${helperInfo.managed})`);
+    log(`using ${helperInfo.path} v${helperInfo.version} (${helperInfo.source})`);
   } catch (err) {
+    log(`no usable helper: ${err}`);
     statusBar.setStatus("unavailable", "helper not found");
     vscode.window.showErrorMessage(
       `PyPilot: could not locate the helper binary. ${err}\n` +
         "Install `pypilot` manually and ensure it is on your PATH, or check your internet connection."
     );
-    return;
+    return testApi;
   }
 
   // ── 2b. Background update check (non-blocking) ───────────────────────────
@@ -75,7 +101,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // The report panel takes its Markdown from the server's report document.
   const reports = new ReportRouter(helperPath);
   clients = new ClientManager({
+    // Every folder's server runs the helper resolved above (helperPath
+    // setting, PATH or the pinned, verified download).
     helperPath,
+    outputChannel: output,
     middleware: (folder) => reports.middleware(folder),
     onStarted: (_fc, ok, err) => {
       if (ok) {
@@ -110,6 +139,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
     }, 3000);
   }
+
+  return testApi;
 }
 
 export async function deactivate(): Promise<void> {

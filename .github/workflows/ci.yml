@@ -22,6 +22,19 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      - name: Unit tests
+        run: bun test
+
+      # The production dependencies are bundled into the extension, so a
+      # known vulnerability there fails the build.
+      - name: Audit bundled dependencies
+        run: bun audit --prod --audit-level=moderate
+
+      # Dev-only tools (vsce, typescript) never ship; report, don't block.
+      - name: Audit all dependencies (informational)
+        continue-on-error: true
+        run: bun audit
+
       - name: Build extension
         run: bun run build
 
@@ -34,3 +47,23 @@ jobs:
           name: pypilot-vscode-vsix
           path: "*.vsix"
           if-no-files-found: error
+
+  e2e:
+    # A real VS Code 1.85 under xvfb: activation, command registration, the
+    # verified engine download (PYPILOT_E2E_FRESH=1: no pypilot installed, so
+    # activation must fetch and check the pinned engine) and the report panel.
+    name: End-to-end (VS Code 1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Cache the VS Code download
+        uses: actions/cache@v4
+        with:
+          path: .vscode-test
+          key: vscode-test-1.85.0-${{ runner.os }}
+      - name: Run the e2e suite
+        env:
+          PYPILOT_E2E_FRESH: "1"
+        run: xvfb-run -a bun run e2e

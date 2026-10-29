@@ -61,6 +61,8 @@ interface Entry extends FolderClient {
 
 export interface ClientManagerOptions {
   helperPath: string;
+  /** Shared output channel; the manager creates (and disposes) its own when absent. */
+  outputChannel?: vscode.OutputChannel;
   /** Extra middleware per client (the report panel hooks showDocument). */
   middleware?: (folder: vscode.WorkspaceFolder | undefined) => Middleware;
   /** Called after each start attempt. */
@@ -158,7 +160,8 @@ export class ClientManager implements vscode.Disposable {
   /** Server command ids registered by this manager. */
   private readonly routed = new Map<string, vscode.Disposable>();
   private readonly disposables: vscode.Disposable[] = [];
-  private readonly outputChannel = vscode.window.createOutputChannel('PyPilot');
+  private readonly outputChannel: vscode.OutputChannel;
+  private readonly ownsOutputChannel: boolean;
   private readonly changed = new vscode.EventEmitter<void>();
   /** False when command routing cannot be set up: one server only, as before. */
   private multi = true;
@@ -167,7 +170,10 @@ export class ClientManager implements vscode.Disposable {
   /** Fires when a client is added or removed. */
   readonly onDidChange = this.changed.event;
 
-  constructor(private readonly options: ClientManagerOptions) {}
+  constructor(private readonly options: ClientManagerOptions) {
+    this.ownsOutputChannel = !options.outputChannel;
+    this.outputChannel = options.outputChannel ?? vscode.window.createOutputChannel('PyPilot');
+  }
 
   /** Start the servers for the current folders and follow later changes. */
   start(): void {
@@ -391,7 +397,7 @@ export class ClientManager implements vscode.Disposable {
     this.clients.clear();
     clients.forEach((fc) => fc.watcher.dispose());
     await Promise.all(clients.map((fc) => fc.client.stop().catch(() => undefined)));
-    this.outputChannel.dispose();
+    if (this.ownsOutputChannel) this.outputChannel.dispose();
     this.changed.dispose();
   }
 }

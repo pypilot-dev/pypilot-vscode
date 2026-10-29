@@ -10,6 +10,7 @@
  * page with inline styles in the panel's current colors and no scripts.
  */
 
+import { randomBytes } from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -221,10 +222,20 @@ interface HtmlOptions {
   theme?: Record<string, string>;
   /** Export only: when the file was written. */
   generated?: Date;
+  /** Panel only: the script nonce; a fresh random one when omitted. */
+  nonce?: string;
 }
 
-function buildHtml(markdown: string, opts: HtmlOptions): string {
+/**
+ * The page for `markdown`. In the panel, scripts only run with this
+ * render's nonce: no `unsafe-inline`, no inline event handlers (buttons
+ * carry `data-command`), so markup that slipped through `markdownToHtml`
+ * cannot execute. The nonce is new on every call, i.e. on every refresh.
+ * The exported page has no scripts at all.
+ */
+export function buildHtml(markdown: string, opts: HtmlOptions): string {
   const html = markdownToHtml(markdown);
+  const nonce = opts.nonce ?? randomBytes(16).toString("base64");
   const panel = opts.mode === "panel";
   // The exported page has no VS Code to supply the theme variables, so it
   // defines them itself, with the colors the panel had when it was saved.
@@ -234,7 +245,7 @@ function buildHtml(markdown: string, opts: HtmlOptions): string {
         .join("\n")}\n  }\n  `
     : "";
   const csp = panel
-    ? "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';"
+    ? `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`
     : "default-src 'none'; style-src 'unsafe-inline';";
   const subtitle = [
     "Deterministic Python environment doctor · no AI · no API keys",
@@ -245,29 +256,33 @@ function buildHtml(markdown: string, opts: HtmlOptions): string {
     .join(" · ");
   const actions = panel
     ? `<div class="actions">
-  <button onclick="post('setup')">Fix Everything</button>
-  <button class="secondary" onclick="post('fixPython')">Fix Python Version</button>
-  ${opts.showCuda === false ? "" : `<button class="secondary" onclick="post('fixCuda')">Fix CUDA / PyTorch</button>`}
+  <button data-command="setup">Fix Everything</button>
+  <button class="secondary" data-command="fixPython">Fix Python Version</button>
+  ${opts.showCuda === false ? "" : `<button class="secondary" data-command="fixCuda">Fix CUDA / PyTorch</button>`}
   <span class="spacer"></span>
-  <button class="secondary" onclick="post('copyMarkdown')" title="Copy the report as Markdown">Copy as Markdown</button>
-  <button class="secondary" onclick="saveHtml()" title="Save a standalone HTML copy of this report">Save as HTML</button>
+  <button class="secondary" data-command="copyMarkdown" title="Copy the report as Markdown">Copy as Markdown</button>
+  <button class="secondary" data-command="saveHtml" title="Save a standalone HTML copy of this report">Save as HTML</button>
 </div>
 
 <hr style="margin: 20px 0; border-color: var(--border);">`
     : `<hr style="margin: 20px 0; border-color: var(--border);">`;
   const script = panel
-    ? `<script>
+    ? `<script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
 const THEME_VARS = ${JSON.stringify(THEME_VARS)};
-function post(command, arg) {
-  vscode.postMessage({ command, arg });
-}
 // The export uses the colors this panel is showing right now.
 function saveHtml() {
   const style = getComputedStyle(document.documentElement);
   const theme = {};
   for (const name of THEME_VARS) theme[name] = style.getPropertyValue(name).trim();
   vscode.postMessage({ command: 'saveHtml', theme });
+}
+for (const button of document.querySelectorAll("button[data-command]")) {
+  button.addEventListener("click", () => {
+    const command = button.dataset.command;
+    if (command === "saveHtml") saveHtml();
+    else vscode.postMessage({ command, arg: button.dataset.arg });
+  });
 }
 </script>`
     : "";

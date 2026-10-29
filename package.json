@@ -143,6 +143,23 @@
     "configuration": {
       "title": "PyPilot",
       "properties": {
+        "pypilot.helperPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to a `pypilot` executable to use instead of the downloaded engine, for example a local build (`target/release/pypilot`). When set, PyPilot runs exactly this binary (it must answer `--version`), never downloads the engine and does not offer engine updates. Leave empty to use the engine pinned by this extension.",
+          "scope": "machine"
+        },
+        "pypilot.engineUpdates": {
+          "type": "string",
+          "enum": ["pinned", "latest"],
+          "enumDescriptions": [
+            "Offer only the engine version this extension release was tested with (its pin). Updating the extension brings newer engines.",
+            "Also offer newer engine releases from GitHub as soon as they are published. Each download is verified against the release's SHA256SUMS file; releases without one are not installed."
+          ],
+          "default": "pinned",
+          "markdownDescription": "Which PyPilot engine updates to offer. Downloads are always checked against a SHA-256 before anything is extracted.",
+          "scope": "application"
+        },
         "pypilot.packageManager": {
           "type": "string",
           "enum": ["auto", "uv", "uv-pip", "pip", "pixi"],
@@ -269,13 +286,17 @@
     ]
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "build": "bun run build.ts",
     "watch": "bun run build.ts --watch",
     "lint": "bunx @biomejs/biome check src",
-    "package": "bun run build --production && bunx @vscode/vsce package --no-dependencies"
+    "package": "bun run build --production && bunx @vscode/vsce package --no-dependencies",
+    "test": "bun test",
+    "e2e": "bun run build && bun e2e/run.ts"
   },
   "devDependencies": {
+    "@types/bun": "1.4.3",
+    "@vscode/test-electron": "3.1.0",
     "@types/node": "^20.0.0",
     "@types/vscode": "1.85.0",
     "typescript": "^5.3.0",
@@ -283,5 +304,14 @@
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
+  },
+  "pypilotEngine": {
+    "version": "1.2.2",
+    "sha256": {
+      "pypilot-windows-x64.zip": "e6f8471f55bd47c065353ab7a5239ef9e798b483525bf11bb6f742c05051877e",
+      "pypilot-linux-x64.tar.gz": "974c1523fce855697de4bef89ee6c9d8221d6368ebdd0e3b8e298e7d411e6ea3",
+      "pypilot-darwin-arm64.tar.gz": "02913af2d7864a86f422fe245c36d927dfc4962e2f6d6cc02d904b9e32309329",
+      "pypilot-darwin-x64.tar.gz": "250bf3dfc2e0a2e5f796c9cba1ae41c4e89d2a8d8594429905cce692eb43d53f"
+    }
   }
 }
