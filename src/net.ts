@@ -3,6 +3,14 @@
  * files and archives, with redirects, idle timeouts and readable errors.
  * No `vscode` import, so it can be tested against a local server.
  *
+ * Proxies: with VS Code's default `http.proxySupport: "override"` the
+ * extension host patches Node's `https` module for extensions and applies
+ * `http.proxy` / the system proxy / `HTTPS_PROXY` itself, so nothing is
+ * needed here. When the user sets `http.proxySupport` to "off", that
+ * patching is gone and the downloader calls `setEnvProxy(true)`: requests
+ * then honour `HTTPS_PROXY` / `NO_PROXY` like other command-line tools,
+ * through an HTTP CONNECT tunnel.
+ *
  * Plain `http:` is refused except for loopback hosts (the tests' local
  * release server).
  */
@@ -10,6 +18,8 @@
 import * as fs from 'fs';
 import * as http from 'http';
 import * as https from 'https';
+import type { Duplex } from 'stream';
+import * as tls from 'tls';
 
 /** Idle timeouts. `setTimeout` on a request resets on activity, so a
  *  slow-but-moving download never trips them. */
@@ -21,6 +31,13 @@ const MAX_REDIRECTS = 5;
 const MAX_TEXT_BYTES = 1024 * 1024;
 
 const USER_AGENT = 'pypilot-vscode';
+
+let envProxyEnabled = false;
+
+/** Route requests through `HTTPS_PROXY` / `NO_PROXY` (see the module doc). */
+export function setEnvProxy(enabled: boolean): void {
+  envProxyEnabled = enabled;
+}
 
 export class HttpStatusError extends Error {
   constructor(
@@ -41,6 +58,77 @@ export function isLoopback(hostname: string): boolean {
   return h === 'localhost' || h === '::1' || /^127\.\d+\.\d+\.\d+$/.test(h);
 }
 
+/**
+ * The proxy for `target` from the environment, or undefined for a direct
+ * connection. `NO_PROXY` takes `*`, host names (matching subdomains too, with
+ * or without a leading dot) and optional `:port` suffixes.
+ */
+export function proxyFromEnv(target: URL, env: NodeJS.ProcessEnv): URL | undefined {
+  if (isLoopback(target.hostname)) return undefined;
+  const raw =
+    target.protocol === 'https:'
+      ? env.https_proxy || env.HTTPS_PROXY || env.http_proxy || env.HTTP_PROXY
+      : env.http_proxy || env.HTTP_PROXY;
+  if (!raw) return undefined;
+
+  const noProxy = (env.no_proxy || env.NO_PROXY || '').toLowerCase();
+  const host = target.hostname.toLowerCase();
+  const port = target.port || (target.protocol === 'https:' ? '443' : '80');
+  for (const entry of noProxy.split(/[\s,]+/).filter(Boolean)) {
+    if (entry === '*') return undefined;
+    const [name, entryPort] = entry.replace(/^\*?\./, '').split(':');
+    if (entryPort && entryPort !== port) continue;
+    if (host === name || host.endsWith(`.${name}`)) return undefined;
+  }
+
+  try {
+    return new URL(raw.includes('://') ? raw : `http://${raw}`);
+  } catch {
+    return undefined;
+  }
+}
+
+/** An https agent that reaches its targets through an HTTP CONNECT proxy. */
+class TunnelAgent extends https.Agent {
+  constructor(private readonly proxy: URL) {
+    super({ keepAlive: false });
+  }
+
+  createConnection(
+    options: http.RequestOptions & tls.ConnectionOptions,
+    callback?: (err: Error | null, stream: Duplex) => void
+  ): Duplex | null | undefined {
+    const done = callback ?? (() => undefined);
+    const fail = (err: Error) => done(err, undefined as unknown as Duplex);
+    const host = options.hostname ?? options.host ?? 'localhost';
+    const port = Number(options.port ?? 443);
+    const headers: Record<string, string> = { Host: `${host}:${port}` };
+    if (this.proxy.username) {
+      const creds = `${decodeURIComponent(this.proxy.username)}:${decodeURIComponent(this.proxy.password)}`;
+      headers['Proxy-Authorization'] = `Basic ${Buffer.from(creds).toString('base64')}`;
+    }
+    const lib = this.proxy.protocol === 'https:' ? https : http;
+    const req = lib.request({
+      host: this.proxy.hostname,
+      port: this.proxy.port || (this.proxy.protocol === 'https:' ? 443 : 80),
+      method: 'CONNECT',
+      path: `${host}:${port}`,
+      headers,
+    });
+    req.once('connect', (res, socket) => {
+      if (res.statusCode !== 200) {
+        socket.destroy();
+        fail(new Error(`Proxy ${this.proxy.host} refused CONNECT ${host}:${port} with HTTP ${res.statusCode}`));
+        return;
+      }
+      done(null, tls.connect({ ...options, host, port, socket, servername: options.servername ?? host }));
+    });
+    req.once('error', (err) => fail(new Error(`Proxy ${this.proxy.host}: ${err.message}`)));
+    req.end();
+    return undefined;
+  }
+}
+
 function get(
   url: string,
   headers: Record<string, string>,
@@ -54,7 +142,12 @@ function get(
   if (target.protocol !== 'https:') {
     throw new Error(`Refusing to fetch ${url}: only https is allowed`);
   }
-  return https.get(target, { headers: allHeaders }, onResponse);
+  const proxy = envProxyEnabled ? proxyFromEnv(target, process.env) : undefined;
+  return https.get(
+    target,
+    { headers: allHeaders, ...(proxy ? { agent: new TunnelAgent(proxy) } : {}) },
+    onResponse
+  );
 }
 
 /** GET a small body as text, following redirects. Throws `HttpStatusError`

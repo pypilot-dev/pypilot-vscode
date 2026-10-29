@@ -46,7 +46,7 @@ import {
   verifySha256,
 } from './engine';
 import { installHelper, removeRetired } from './helperInstall';
-import { HttpStatusError, downloadFile, fetchJson, fetchText } from './net';
+import { HttpStatusError, downloadFile, fetchJson, fetchText, setEnvProxy } from './net';
 
 const HELPER_REPO = 'pypilot-dev/pypilot';
 const MIN_VERSION: Version = [0, 1, 0];
@@ -80,6 +80,8 @@ export async function ensureHelper(
   context: vscode.ExtensionContext,
   log: Log = (line) => console.log(`PyPilot: ${line}`)
 ): Promise<HelperInfo> {
+  configureProxy();
+
   // 0. An explicit helper (developers): use it or fail, never download.
   const configured = configuredHelperPath();
   if (configured) {
@@ -372,6 +374,13 @@ function configuredHelperPath(): string | undefined {
     ? path.join(os.homedir(), raw.slice(1))
     : raw;
   return path.resolve(expanded);
+}
+
+/** With `http.proxySupport` "off", VS Code no longer proxies extension
+ *  requests, so fall back to the environment (see net.ts). */
+function configureProxy(): void {
+  const support = vscode.workspace.getConfiguration('http').get<string>('proxySupport', 'override');
+  setEnvProxy(support === 'off');
 }
 
 function helperBinName(): string {
