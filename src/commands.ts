@@ -22,6 +22,7 @@ import { checkForHelperUpdate, ensureHelper } from "./downloader";
 import { activeFolder, ClientManager, FolderClient } from "./clients";
 import { condaEnvFile, dependsOnTorch } from "./project";
 import { isPixiProject } from "./venv";
+import { ReportRouter } from "./report";
 
 // Must match the command IDs registered in the LSP server (lsp/mod.rs).
 const CMD_FIX = "pypilot.fixEverything";
@@ -102,7 +103,8 @@ export function registerCommands(
   clients: ClientManager,
   statusBar: PyPilotStatusBar,
   /** The binary the extension resolved: a PATH install or the managed download. */
-  helperPath: string
+  helperPath: string,
+  reports: ReportRouter
 ): void {
   /**
    * The server for the folder a command acts on: the active editor's
@@ -377,9 +379,24 @@ export function registerCommands(
   });
 
   // ── pypilot.openReport ────────────────────────────────────────────────────
+  // Shows the server's report in the webview panel (with the export
+  // actions). From the report's own Markdown editor (editor title button)
+  // it shows that report without scanning again.
   r("pypilot.openReport", async () => {
-    // Delegate to doctor — the LSP server opens the markdown doc itself.
-    await vscode.commands.executeCommand("pypilot.doctor");
+    if (reports.isReportFile(vscode.window.activeTextEditor?.document.uri) && reports.showLast()) return;
+    const fc = await target();
+    if (!fc) return;
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "PyPilot", cancellable: false },
+      async (progress) => {
+        progress.report({ message: "Running environment scan…" });
+        try {
+          await reports.open(fc);
+        } catch (err) {
+          vscode.window.showErrorMessage(`PyPilot: could not open the report. ${err}`);
+        }
+      }
+    );
   });
 
   // ── pypilot.installUv ─────────────────────────────────────────────────────

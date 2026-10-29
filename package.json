@@ -131,6 +131,13 @@
           "command": "pypilot.installPixiCli",
           "when": "!pypilot.pixiInstalled"
         }
+      ],
+      "editor/title": [
+        {
+          "command": "pypilot.openReport",
+          "when": "resourceFilename == pypilot-report.md",
+          "group": "navigation"
+        }
       ]
     },
     "configuration": {

@@ -26,6 +26,7 @@ import { ReportPanel } from "./webview/reportPanel";
 import { registerVenvSelection } from "./venv";
 import { registerContextKeys } from "./project";
 import { ClientManager } from "./clients";
+import { ReportRouter } from "./report";
 
 let clients: ClientManager | undefined;
 let statusBar: PyPilotStatusBar | undefined;
@@ -71,8 +72,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // ── 3. Language clients ───────────────────────────────────────────────────
   // One server per workspace folder that holds a Python project; a
   // single-folder window gets exactly one, as before.
+  // The report panel takes its Markdown from the server's report document.
+  const reports = new ReportRouter(helperPath);
   clients = new ClientManager({
     helperPath,
+    middleware: (folder) => reports.middleware(folder),
     onStarted: (_fc, ok, err) => {
       if (ok) {
         statusBar?.setStatus("ok");
@@ -86,7 +90,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   clients.start();
 
   // ── 4. Commands ───────────────────────────────────────────────────────────
-  registerCommands(context, clients, statusBar, helperPath);
+  registerCommands(context, clients, statusBar, helperPath, reports);
 
   // ── 5. Task provider ──────────────────────────────────────────────────────
   context.subscriptions.push(
