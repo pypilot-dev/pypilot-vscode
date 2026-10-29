@@ -11,3 +11,9 @@ disable = false
 [run]
 # No shell-level quoting surprises — Bun runs scripts directly.
 bun = true
+
+[test]
+# Unit tests run outside VS Code: give modules that import "vscode" a stub.
+preload = ["./test/setup.ts"]
+# The e2e suite runs inside VS Code (bun run e2e), never under bun test.
+pathIgnorePatterns = ["e2e/**"]
