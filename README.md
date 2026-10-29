@@ -19,6 +19,8 @@ PyPilot inspects Python projects, figures out which Python versions your depende
 
 This extension runs the same native Rust engine as [PyPilot for Zed](https://github.com/pypilot-dev/pypilot), integrated with VS Code surfaces: the command palette, status bar, progress indicators, interactive doctor report panel, and workspace tasks.
 
+Documentation: **<https://pypilot-dev.github.io/pypilot/>** ([VS Code guide](https://pypilot-dev.github.io/pypilot/vscode/), [commands](https://pypilot-dev.github.io/pypilot/vscode/commands), [settings](https://pypilot-dev.github.io/pypilot/vscode/settings), [pixi](https://pypilot-dev.github.io/pypilot/pixi/)).
+
 ## Features
 
 - **Environment setup**: Runs `uv init` and `uv add` when no `pyproject.toml` exists. In pip mode, records installations using `pip freeze > requirements.txt`.
@@ -47,13 +49,42 @@ This extension runs the same native Rust engine as [PyPilot for Zed](https://git
 
 The same steps are in the **Get started with PyPilot** walkthrough (Help > Welcome).
 
-## pixi projects
+## pixi
 
-A folder with a `pixi.toml`, or a `pyproject.toml` with `[tool.pixi.workspace]`, is treated as a pixi project:
+[pixi](https://pixi.sh) installs packages from conda-forge and PyPI into a per-project environment, with a lock file. It helps where pip and uv stop:
+
+- **System libraries** (GDAL, PROJ, GEOS, libGL...): pip and uv cannot install them; conda-forge ships them next to the Python bindings.
+- **No wheel for your platform or Python**: conda-forge often has a prebuilt build, so no compiler is needed.
+- **The CUDA toolkit**: pip wheels carry only the CUDA runtime, not `nvcc`; conda-forge provides it per project.
+- **One manifest** for Python together with R, C++ or Rust, **one lock file** (`pixi.lock`) covering native dependencies on every listed OS, and **several environments** (for example `default` and `cuda`) in one project.
+
+Guide: [pixi and PyPilot](https://pypilot-dev.github.io/pypilot/pixi/).
+
+### pixi projects
+
+A folder with a `pixi.toml`, or a `pyproject.toml` with `[tool.pixi.workspace]`, is treated as a pixi project, whatever `pypilot.packageManager` says:
 
 - The environment lives in `.pixi/envs/<name>`, where `<name>` is `pypilot.pixiEnvironment` (`default` unless set).
-- PyPilot never creates a `.venv` there and never touches `pixi.lock`.
-- Package installs go through `pixi add --pypi`.
+- PyPilot never creates a `.venv` there, never runs uv and never writes `pixi.lock`.
+- Setup runs `pixi install`, package installs go through `pixi add --pypi`, and changing Python runs `pixi add python=X.Y`. When pixi fails, the report names the package to blame and the fix.
+- With an engine newer than 1.2.2, the doctor report lists every pixi environment and warns about environments on different Pythons, a `pixi.lock` that no longer matches the manifest (a read-only check) and PyPI dependencies with no wheel for one of the manifest's platforms.
+
+### When PyPilot suggests pixi
+
+With an engine newer than 1.2.2, PyPilot recognises problems pip and uv cannot solve in a pip or uv project and suggests pixi: a dependency with no wheel whose build needs native libraries, a failed build missing a header such as `gdal.h`, CUDA sources without `nvcc`, or a repository that mixes Python with R, Rust or C++. For a `requirements.txt` with `numpy`, `requests` and `gdal` on Windows, the report says:
+
+```
+[WARN ] GDAL 3.13.3 needs native libraries pip cannot install
+        GDAL 3.13.3 has no wheel for Windows x64, so pip and uv build it from source. [...] pixi installs gdal 3.13.3 from conda-forge with its native libraries (libgdal, proj, geos), built for win-64 and Python 3.15. Run `pypilot migrate-to-pixi` to set the project up with pixi.
+```
+
+It only suggests. Nothing changes until you choose **Initialize pixi project**, on the notification or in the Command Palette. See [the advisory](https://pypilot-dev.github.io/pypilot/pixi/advisory).
+
+### Moving a project to pixi
+
+**PyPilot: Initialize pixi project** opens the `pixi.toml` PyPilot would write as a preview, then writes it (optionally running `pixi install`) only after you confirm. It writes a separate `pixi.toml` and leaves `pyproject.toml`, `requirements.txt` and `environment.yml` untouched, so pip and CI keep working. Dependencies that conda-forge builds for every target platform become conda dependencies (`torch` becomes `pytorch`); the rest stay on PyPI with the reason as a comment. **PyPilot: Install pixi** installs pixi with its official installer if it is missing, and setting `pypilot.packageManager` to `pixi` makes setup write the `pixi.toml` itself. From a terminal, `pypilot migrate-to-pixi` and `pypilot migrate-conda --to pixi` do the same. Step by step: [Migrating to pixi](https://pypilot-dev.github.io/pypilot/pixi/migrate).
+
+These commands and settings are new since 1.2.1 and need an engine newer than 1.2.2; with an older engine, Initialize pixi project asks you to update it and Install pixi offers to run pixi's installer in a terminal.
 
 ## Multi-root workspaces
 
