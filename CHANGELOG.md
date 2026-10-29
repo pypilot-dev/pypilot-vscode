@@ -2,7 +2,23 @@
 
 ## Unreleased
 
+### Security
+
+- The engine is pinned: the extension installs the version named in
+  `package.json` (`pypilotEngine`, currently 1.2.2) instead of whatever is
+  latest, and checks every download's SHA-256 before extracting it (the pin
+  for the pinned version, the release's `SHA256SUMS` otherwise). Mismatches
+  and releases without checksums install nothing.
+- The report panel only runs scripts carrying a per-render nonce (no
+  `unsafe-inline`).
+
 ### Added
+
+- `pypilot.helperPath`: run a locally built helper; no downloads or update
+  offers while it is set.
+- `pypilot.engineUpdates`: `pinned` (default) or `latest`.
+- Downloads honour `HTTPS_PROXY` / `NO_PROXY` when `http.proxySupport` is
+  `off` (otherwise VS Code proxies them itself).
 
 - `pypilot.pixiEnvironment` setting: which pixi environment PyPilot and the
   interpreter selection use in multi-environment pixi projects (default

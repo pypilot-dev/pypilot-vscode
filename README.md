@@ -35,7 +35,7 @@ This extension runs the same native Rust engine as [PyPilot for Zed](https://git
 ## Requirements
 
 - VS Code 1.85 or later.
-- Network access during initial startup to download the native `pypilot` helper binary (approximately 3 MB).
+- Network access during initial startup to download the native `pypilot` helper binary (approximately 3 MB), unless `pypilot` is already on `PATH` or `pypilot.helperPath` is set. Behind a proxy, VS Code's `http.proxy` (or the system proxy) is used; with `http.proxySupport` set to `off`, the `HTTPS_PROXY` / `NO_PROXY` environment variables are.
 - Python does not need to be installed beforehand when using `uv` mode; `uv` downloads required interpreters directly.
 
 ## Getting started
@@ -85,13 +85,15 @@ Commands marked "Only when..." are hidden from the Command Palette in workspaces
 | `PyPilot: Install uv Globally` | Installs `uv` so it is available outside this workspace |
 | `PyPilot: Install pixi` | Installs [pixi](https://pixi.sh) with its official installer. Only when pixi is not found on `PATH` or in `~/.pixi/bin` |
 | `PyPilot: Initialize pixi project` | Shows the `pixi.toml` PyPilot would write for this project, then writes it (optionally running `pixi install`) only after you confirm. Only when a folder is not a pixi project yet |
-| `PyPilot: Check for Helper Updates` | Compares the installed helper against the latest GitHub release |
+| `PyPilot: Check for Helper Updates` | Offers the engine version this extension pins when it is newer than the helper in use (with `pypilot.engineUpdates: "latest"`, also newer GitHub releases) |
 | `PyPilot: Use Project Environment (.venv / pixi)` | Makes the workspace's `.venv` (or the pixi environment set in `pypilot.pixiEnvironment`) the active Python interpreter |
 
 ## Settings
 
 | Setting | Default | Description |
 |---|---|---|
+| `pypilot.helperPath` | `""` | Path to a `pypilot` executable to use instead of the downloaded engine (for example a local `cargo build`). It must answer `--version`; while set, nothing is downloaded and no engine updates are offered. Machine setting: a workspace cannot set it. |
+| `pypilot.engineUpdates` | `"pinned"` | `pinned` offers only the engine version this extension release pins (updating the extension brings newer engines). `latest` also offers newer engine releases from GitHub; those are verified against the release's `SHA256SUMS` and refused if it has none. |
 | `pypilot.packageManager` | `"auto"` | `auto` (use `uv` when it is installed, offer to install it, otherwise fall back to `pip`), `uv` project mode, `uv-pip`, `pip`, or `pixi` (environment in `.pixi/envs/<name>`, installs via `pixi add --pypi`). pixi projects use pixi in `auto` mode too. |
 | `pypilot.notifications` | `"problems-only"` | Configures notification verbosity: `all`, `problems-only`, or `off`. |
 | `pypilot.autoCheckOnOpen` | `true` | Automatically checks the environment when opening a workspace. |
@@ -102,7 +104,17 @@ Commands marked "Only when..." are hidden from the Command Palette in workspaces
 
 ## Architecture
 
-The extension is a TypeScript client wrapping the native Rust `pypilot` helper binary. On startup, the extension checks PATH for an existing binary and downloads a release if none is found. The helper communicates over standard I/O via the Language Server Protocol.
+The extension is a TypeScript client wrapping the native Rust `pypilot` helper binary. On startup it uses `pypilot.helperPath` when set; otherwise the newer of a `pypilot` on PATH and the copy in the extension's storage; otherwise it downloads the engine version pinned in `package.json`. The helper communicates over standard I/O via the Language Server Protocol.
+
+### Engine pin and verification
+
+`package.json` carries the engine pin, which the engine's release workflow bumps on each release:
+
+```json
+"pypilotEngine": { "version": "1.2.2", "sha256": { "pypilot-windows-x64.zip": "<hex>", "...": "..." } }
+```
+
+Every download is hashed before anything is extracted. The pinned version must match the SHA-256 in `package.json`; any other version (`pypilot.engineUpdates: "latest"`) must match the release's `SHA256SUMS` asset (`<sha256>  <asset>` per line). On a mismatch the archive is deleted and nothing is installed; a release without `SHA256SUMS` is refused. There is no switch to install unverified engines: build one yourself and use `pypilot.helperPath` instead. The "PyPilot" output channel logs which helper is used and which checksum each download matched.
 
 Settings reach the helper two ways: `initializationOptions` at startup (`pixiEnvironment`, `diagnosticsScope`) and the whole `pypilot` settings section through `workspace/didChangeConfiguration` (`settings.pypilot.<key>`), sent once after startup and on every change. In multi-root windows both are read for the server's folder.
 
@@ -111,7 +123,9 @@ pypilot-vscode/
 ├── src/
 │   ├── extension.ts        Activation and onboarding flow
 │   ├── clients.ts          One language client per workspace folder, server command routing
-│   ├── downloader.ts       Binary resolution and release downloads
+│   ├── downloader.ts       Helper resolution, pinned/verified engine downloads, update offers
+│   ├── engine.ts           Engine pin, versions, SHA-256 and SHA256SUMS checks (no vscode import)
+│   ├── net.ts              HTTPS requests, redirects, proxy tunnel (no vscode import)
 │   ├── statusBar.ts        Status bar indicator and environment tooltip
 │   ├── commands.ts         Command palette actions
 │   ├── project.ts          File-based project checks and the palette context keys
@@ -141,6 +155,14 @@ bun run build --watch
 
 # Build vsix package
 bun run package
+
+# Unit tests (engine pin, verification, HTTP, report HTML)
+bun test
+
+# End-to-end in a real VS Code 1.85 (downloads VS Code; Linux needs xvfb-run -a)
+bun run e2e
+# ... hiding any installed pypilot, so activation downloads the pinned engine
+PYPILOT_E2E_FRESH=1 bun run e2e
 ```
 
 ## Support the project
