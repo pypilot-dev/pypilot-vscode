@@ -62,7 +62,7 @@ if (watchMode) {
       timer = undefined;
       console.log(`Changed: ${filename}`);
       build().then((ok) => {
-        if (!ok) console.error("Build failed — fix the error and save again.");
+        if (!ok) console.error("Build failed. Fix the error and save again.");
       });
     }, 100);
   });
