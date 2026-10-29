@@ -3,8 +3,9 @@
  *
  * The project environment is `<folder>/.venv`, or, in a pixi project (a
  * `pixi.toml`, or a `pyproject.toml` with `[tool.pixi.workspace]` /
- * `[tool.pixi.project]`), pixi's default environment `<folder>/.pixi/envs/default`.
- * pixi projects never get a `.venv` from here.
+ * `[tool.pixi.project]`), the pixi environment named by `pypilot.pixiEnvironment`
+ * (`default` unless set): `<folder>/.pixi/envs/<name>`. pixi projects never
+ * get a `.venv` from here.
  *
  * After PyPilot (or uv / pip / pixi) creates it, the Python interpreter
  * picker and the Jupyter kernel picker keep using whatever interpreter was
@@ -33,6 +34,12 @@ const DEBOUNCE_MS = 2000;
 // `[tool.pixi.workspace]` (current) or `[tool.pixi.project]` (older pixi) at
 // the start of a line. A plain text check is enough to spot pixi projects.
 const PIXI_TABLE = /^[ \t]*\[[ \t]*tool\.pixi\.(?:workspace|project)[ \t]*\]/m;
+
+// pixi environment names: lowercase letters, digits and dashes. Anything else
+// (a path, an empty string) falls back to `default` rather than letting the
+// setting point the interpreter outside `.pixi/envs`.
+const PIXI_ENV_NAME = /^[a-z0-9-]+$/;
+const DEFAULT_PIXI_ENV = 'default';
 
 // ── Local views of the Python Environments API (ms-python.vscode-python-envs) ─
 
@@ -83,6 +90,8 @@ type EnvKind = 'venv' | 'pixi';
 /** The environment PyPilot treats as "the project's" for a folder. */
 interface ProjectEnv {
   readonly kind: EnvKind;
+  /** pixi environment name (`default`, `cuda`, ...); undefined for `.venv`. */
+  readonly name?: string;
   /** Environment root: the venv folder or the conda-style pixi prefix. */
   readonly dir: string;
   /** Interpreter inside `dir`; may not exist yet. */
@@ -100,12 +109,29 @@ function isPixiProject(folder: vscode.WorkspaceFolder): boolean {
   }
 }
 
+/** The pixi environment PyPilot uses for `folder` (`pypilot.pixiEnvironment`). */
+export function pixiEnvName(folder: vscode.WorkspaceFolder | undefined): string {
+  const raw = vscode.workspace
+    .getConfiguration('pypilot', folder?.uri)
+    .get<string>('pixiEnvironment', DEFAULT_PIXI_ENV)
+    ?.trim();
+  if (raw && PIXI_ENV_NAME.test(raw)) return raw;
+  if (raw) log(`ignoring invalid pypilot.pixiEnvironment "${raw}"; using "${DEFAULT_PIXI_ENV}"`);
+  return DEFAULT_PIXI_ENV;
+}
+
 function projectEnv(folder: vscode.WorkspaceFolder): ProjectEnv {
   const win = process.platform === 'win32';
   if (isPixiProject(folder)) {
     // Conda layout: on Windows python.exe sits in the prefix root.
-    const dir = path.join(folder.uri.fsPath, '.pixi', 'envs', 'default');
-    return { kind: 'pixi', dir, python: win ? path.join(dir, 'python.exe') : path.join(dir, 'bin', 'python') };
+    const name = pixiEnvName(folder);
+    const dir = path.join(folder.uri.fsPath, '.pixi', 'envs', name);
+    return {
+      kind: 'pixi',
+      name,
+      dir,
+      python: win ? path.join(dir, 'python.exe') : path.join(dir, 'bin', 'python'),
+    };
   }
   const dir = path.join(folder.uri.fsPath, '.venv');
   return {
@@ -221,7 +247,7 @@ function majorMinor(version: string | undefined): string | undefined {
 async function selectVenv(folder: vscode.WorkspaceFolder, reason: VenvReason): Promise<VenvResult> {
   const target = projectEnv(folder);
   const pythonPath = target.python;
-  const name = target.kind === 'pixi' ? 'the pixi environment' : '.venv';
+  const name = target.kind === 'pixi' ? `the pixi environment '${target.name}'` : '.venv';
   if (!fs.existsSync(pythonPath)) return 'missing';
 
   const envs = await getEnvsApi();
@@ -282,8 +308,8 @@ async function selectVenv(folder: vscode.WorkspaceFolder, reason: VenvReason): P
   const suffix = version ? ` (Python ${version})` : '';
   vscode.window.showInformationMessage(
     target.kind === 'pixi'
-      ? `PyPilot: this workspace now uses the pixi environment${suffix}. ` +
-          "Notebooks: pick the pixi 'default' environment in the kernel picker if one is already open."
+      ? `PyPilot: this workspace now uses the pixi environment '${target.name}'${suffix}. ` +
+          `Notebooks: pick the pixi '${target.name}' environment in the kernel picker if one is already open.`
       : `PyPilot: this workspace now uses .venv${suffix}. ` +
           "Notebooks: pick '.venv' in the kernel picker if one is already open."
   );
@@ -291,7 +317,7 @@ async function selectVenv(folder: vscode.WorkspaceFolder, reason: VenvReason): P
 }
 
 /**
- * Make the folder's project environment (`.venv`, or pixi's default
+ * Make the folder's project environment (`.venv`, or the configured pixi
  * environment in a pixi project) the active interpreter for `folder`, if it
  * exists and is not already active. Never throws.
  */
@@ -314,9 +340,11 @@ function autoSelectEnabled(folder: vscode.WorkspaceFolder): boolean {
 }
 
 /**
- * Watch `<folder>/.venv/pyvenv.cfg` and, for pixi, the default environment's
+ * Watch `<folder>/.venv/pyvenv.cfg` and, for pixi, every environment's
  * `conda-meta/history` (written by every `pixi install`), and select the
- * project environment once the writes settle.
+ * project environment once the writes settle. All pixi environments are
+ * watched so that changing `pypilot.pixiEnvironment` needs no new watcher;
+ * events for the other environments are ignored.
  */
 function watchFolder(folder: vscode.WorkspaceFolder): vscode.Disposable {
   // RelativePattern keeps the match inside this folder, so an environment
@@ -325,16 +353,19 @@ function watchFolder(folder: vscode.WorkspaceFolder): vscode.Disposable {
     vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, glob), false, false, true);
   const watchers = [
     { kind: 'venv' as EnvKind, watcher: watch('.venv/pyvenv.cfg') },
-    { kind: 'pixi' as EnvKind, watcher: watch('.pixi/envs/default/conda-meta/history') },
+    { kind: 'pixi' as EnvKind, watcher: watch('.pixi/envs/*/conda-meta/history') },
   ];
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const schedule = (kind: EnvKind) => () => {
+  const schedule = (kind: EnvKind) => (uri: vscode.Uri) => {
+    // Only react to the environment this folder actually uses: a stray
+    // `.venv` in a pixi project (or `.pixi` elsewhere), or a pixi environment
+    // other than the configured one, is ignored.
+    const env = projectEnv(folder);
+    if (env.kind !== kind) return;
+    if (kind === 'pixi' && !isWithin(uri.fsPath, env.dir)) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = undefined;
-      // Only react to the environment this folder actually uses: a stray
-      // `.venv` in a pixi project (or `.pixi` elsewhere) is ignored.
-      if (projectEnv(folder).kind !== kind) return;
       if (autoSelectEnabled(folder)) void useProjectVenv(folder, 'watcher');
     }, DEBOUNCE_MS);
   };
@@ -379,6 +410,15 @@ export function registerVenvSelection(context: vscode.ExtensionContext): void {
       }
     }),
     { dispose: () => watchers.forEach((w) => w.dispose()) },
+    // Changing `pypilot.pixiEnvironment` is an explicit choice: select the
+    // newly named environment right away (if it is installed).
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      for (const folder of vscode.workspace.workspaceFolders ?? []) {
+        if (e.affectsConfiguration('pypilot.pixiEnvironment', folder.uri) && autoSelectEnabled(folder)) {
+          void useProjectVenv(folder, 'command');
+        }
+      }
+    }),
     // Explicit request: ignores `pypilot.autoSelectVenv` and the
     // "user picked something else" guard.
     vscode.commands.registerCommand('pypilot.useProjectVenv', async () => {
@@ -387,7 +427,7 @@ export function registerVenvSelection(context: vscode.ExtensionContext): void {
       if (results.includes('changed')) return; // selectVenv already said so.
       if (results.every((r) => r === 'missing')) {
         vscode.window.showInformationMessage(
-          'PyPilot: no .venv or installed pixi environment found in this workspace (pixi projects: run "pixi install").'
+          'PyPilot: no .venv or installed pixi environment found in this workspace (pixi projects: run "pixi install", or "pixi install -e <name>" for the environment set in pypilot.pixiEnvironment).'
         );
       } else if (results.includes('unavailable')) {
         vscode.window.showInformationMessage(

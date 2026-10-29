@@ -35,6 +35,7 @@
     "workspaceContains:**/*.py",
     "workspaceContains:requirements.txt",
     "workspaceContains:pyproject.toml",
+    "workspaceContains:pixi.toml",
     "workspaceContains:environment.yml",
     "onNotebook:jupyter-notebook"
   ],
@@ -92,6 +93,16 @@
         "icon": "$(cloud-download)"
       },
       {
+        "command": "pypilot.installPixiCli",
+        "title": "PyPilot: Install pixi",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "pypilot.initPixiProject",
+        "title": "PyPilot: Initialize pixi project",
+        "icon": "$(new-file)"
+      },
+      {
         "command": "pypilot.updateHelper",
         "title": "PyPilot: Check for Helper Updates",
         "icon": "$(sync)"
@@ -107,12 +118,13 @@
       "properties": {
         "pypilot.packageManager": {
           "type": "string",
-          "enum": ["auto", "uv", "uv-pip", "pip"],
+          "enum": ["auto", "uv", "uv-pip", "pip", "pixi"],
           "enumDescriptions": [
-            "Auto (default): Uses uv if installed on system PATH, prompts to install if missing, or falls back to pip.",
+            "Auto (default): Uses uv if installed on system PATH, prompts to install if missing, or falls back to pip. pixi projects (pixi.toml, or [tool.pixi.workspace] in pyproject.toml) always use pixi.",
             "Use uv project mode (pyproject.toml + uv.lock).",
             "Use uv-accelerated pip-compatible mode (requirements.txt only via uv venv and uv pip).",
-            "Use standard pip + python -m venv. Never touches uv."
+            "Use standard pip + python -m venv. Never touches uv.",
+            "Use pixi: the environment lives in .pixi/envs/<name> (see pypilot.pixiEnvironment), installs go through `pixi add --pypi`, and PyPilot never creates a .venv or edits pixi.lock."
           ],
           "default": "auto",
           "description": "Package manager for environment creation and installs.",
@@ -139,7 +151,15 @@
         "pypilot.autoSelectVenv": {
           "type": "boolean",
           "default": true,
-          "description": "Make the workspace's .venv (in pixi projects: the pixi default environment, .pixi/envs/default) the active Python interpreter (and so the recommended notebook kernel) when it is created or changed, and on startup when no interpreter inside the workspace is selected. Requires the Python extension. The \"PyPilot: Use Project Environment\" command works regardless of this setting.",
+          "description": "Make the workspace's .venv (in pixi projects: the pixi environment named by pypilot.pixiEnvironment, .pixi/envs/<name>) the active Python interpreter (and so the recommended notebook kernel) when it is created or changed, and on startup when no interpreter inside the workspace is selected. Requires the Python extension. The \"PyPilot: Use Project Environment\" command works regardless of this setting.",
+          "scope": "resource"
+        },
+        "pypilot.pixiEnvironment": {
+          "type": "string",
+          "default": "default",
+          "pattern": "^[a-z0-9-]+$",
+          "patternErrorMessage": "pixi environment names use lowercase letters, digits and dashes.",
+          "markdownDescription": "Which pixi environment PyPilot and the interpreter selection use in multi-environment pixi projects (the `[environments]` table of `pixi.toml`). The interpreter is `.pixi/envs/<name>`; install it with `pixi install -e <name>`. Ignored outside pixi projects.",
           "scope": "resource"
         },
         "pypilot.dataRefreshDays": {
@@ -166,6 +186,47 @@
             "description": "Package name (for install / check tasks)."
           }
         }
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "pypilot.gettingStarted",
+        "title": "Get started with PyPilot",
+        "description": "From an open folder to a working Python environment, including pixi projects.",
+        "steps": [
+          {
+            "id": "openProject",
+            "title": "Open a Python project",
+            "description": "PyPilot starts on its own in any folder with Python files or a Python manifest.\n[Open Folder](command:workbench.action.files.openFolder)",
+            "media": { "markdown": "media/walkthrough/open-project.md" },
+            "completionEvents": ["onContext:workspaceFolderCount > 0"]
+          },
+          {
+            "id": "check",
+            "title": "PyPilot checks it",
+            "description": "Python versions, wheels, CUDA builds and imports are checked when the folder opens. See everything it found in the report.\n[Show Environment Report](command:pypilot.doctor)",
+            "media": { "markdown": "media/walkthrough/check.md" },
+            "completionEvents": ["onCommand:pypilot.doctor", "onCommand:pypilot.openReport"]
+          },
+          {
+            "id": "fix",
+            "title": "Fix the environment",
+            "description": "One command creates or repairs the environment on a supported Python and selects it as the interpreter.\n[Set Up Environment](command:pypilot.setup)",
+            "media": { "markdown": "media/walkthrough/fix.md" },
+            "completionEvents": ["onCommand:pypilot.setup", "onCommand:pypilot.fixPython"]
+          },
+          {
+            "id": "pixi",
+            "title": "Using pixi? What's different",
+            "description": "In pixi projects the environment is .pixi/envs/<name>, PyPilot never creates a .venv or touches pixi.lock, and installs go through pixi add --pypi.\n[Choose pixi Environment](command:workbench.action.openSettings?%5B%22pypilot.pixiEnvironment%22%5D)",
+            "media": { "markdown": "media/walkthrough/pixi.md" },
+            "completionEvents": [
+              "onSettingChanged:pypilot.pixiEnvironment",
+              "onCommand:pypilot.installPixiCli",
+              "onCommand:pypilot.initPixiProject"
+            ]
+          }
+        ]
       }
     ]
   },

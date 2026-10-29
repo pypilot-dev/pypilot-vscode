@@ -43,6 +43,16 @@ This extension runs the same native Rust engine as [PyPilot for Zed](https://git
 3. If an issue is found, a prompt appears with options to run the automatic fix or inspect the report.
 4. The environment is configured for the Python version supported by your project dependencies.
 
+The same steps are in the **Get started with PyPilot** walkthrough (Help > Welcome).
+
+## pixi projects
+
+A folder with a `pixi.toml`, or a `pyproject.toml` with `[tool.pixi.workspace]`, is treated as a pixi project:
+
+- The environment lives in `.pixi/envs/<name>`, where `<name>` is `pypilot.pixiEnvironment` (`default` unless set).
+- PyPilot never creates a `.venv` there and never touches `pixi.lock`.
+- Package installs go through `pixi add --pypi`.
+
 ## Commands
 
 | Command | Action |
@@ -57,17 +67,20 @@ This extension runs the same native Rust engine as [PyPilot for Zed](https://git
 | `PyPilot: Migrate Conda environment.yml to pyproject.toml` | Translates conda environment definitions into pyproject.toml |
 | `PyPilot: Open Environment Report Panel` | Runs the health check and opens the environment report |
 | `PyPilot: Install uv Globally` | Installs `uv` so it is available outside this workspace |
+| `PyPilot: Install pixi` | Installs [pixi](https://pixi.sh) with its official installer |
+| `PyPilot: Initialize pixi project` | Shows the `pixi.toml` PyPilot would write for this project, then writes it (optionally running `pixi install`) only after you confirm |
 | `PyPilot: Check for Helper Updates` | Compares the installed helper against the latest GitHub release |
-| `PyPilot: Use Project Environment (.venv / pixi)` | Makes the workspace's `.venv` (or pixi default environment) the active Python interpreter |
+| `PyPilot: Use Project Environment (.venv / pixi)` | Makes the workspace's `.venv` (or the pixi environment set in `pypilot.pixiEnvironment`) the active Python interpreter |
 
 ## Settings
 
 | Setting | Default | Description |
 |---|---|---|
-| `pypilot.packageManager` | `"auto"` | `auto` (use `uv` when it is installed, offer to install it, otherwise fall back to `pip`), `uv` project mode, `uv-pip`, or `pip`. |
+| `pypilot.packageManager` | `"auto"` | `auto` (use `uv` when it is installed, offer to install it, otherwise fall back to `pip`), `uv` project mode, `uv-pip`, `pip`, or `pixi` (environment in `.pixi/envs/<name>`, installs via `pixi add --pypi`). pixi projects use pixi in `auto` mode too. |
 | `pypilot.notifications` | `"problems-only"` | Configures notification verbosity: `all`, `problems-only`, or `off`. |
 | `pypilot.autoCheckOnOpen` | `true` | Automatically checks the environment when opening a workspace. |
-| `pypilot.autoSelectVenv` | `true` | Makes the workspace's `.venv` the active Python interpreter when it is created or changed, and on startup when no interpreter inside the workspace is selected. pixi projects (`pixi.toml`, or `[tool.pixi.workspace]` in `pyproject.toml`) are supported: their default environment (`.pixi/envs/default`) is selected after `pixi install`, and no `.venv` is used. |
+| `pypilot.autoSelectVenv` | `true` | Makes the workspace's `.venv` the active Python interpreter when it is created or changed, and on startup when no interpreter inside the workspace is selected. pixi projects (`pixi.toml`, or `[tool.pixi.workspace]` in `pyproject.toml`) are supported: the environment named by `pypilot.pixiEnvironment` (`.pixi/envs/<name>`) is selected after `pixi install`, and no `.venv` is used. |
+| `pypilot.pixiEnvironment` | `"default"` | Which pixi environment PyPilot and the interpreter selection use in multi-environment pixi projects (for example `cuda`). Install it with `pixi install -e <name>`. Ignored outside pixi projects. |
 | `pypilot.dataRefreshDays` | `7` | Refresh interval in days for compatibility data tables (0 disables updates). |
 
 ## Architecture
