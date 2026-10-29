@@ -67,11 +67,11 @@ A folder with a `pixi.toml`, or a `pyproject.toml` with `[tool.pixi.workspace]`,
 - The environment lives in `.pixi/envs/<name>`, where `<name>` is `pypilot.pixiEnvironment` (`default` unless set).
 - PyPilot never creates a `.venv` there, never runs uv and never writes `pixi.lock`.
 - Setup runs `pixi install`, package installs go through `pixi add --pypi`, and changing Python runs `pixi add python=X.Y`. When pixi fails, the report names the package to blame and the fix.
-- With an engine newer than 1.2.2, the doctor report lists every pixi environment and warns about environments on different Pythons, a `pixi.lock` that no longer matches the manifest (a read-only check) and PyPI dependencies with no wheel for one of the manifest's platforms.
+- Since engine 1.3.0, the doctor report lists every pixi environment and warns about environments on different Pythons, a `pixi.lock` that no longer matches the manifest (a read-only check) and PyPI dependencies with no wheel for one of the manifest's platforms.
 
 ### When PyPilot suggests pixi
 
-With an engine newer than 1.2.2, PyPilot recognises problems pip and uv cannot solve in a pip or uv project and suggests pixi: a dependency with no wheel whose build needs native libraries, a failed build missing a header such as `gdal.h`, CUDA sources without `nvcc`, or a repository that mixes Python with R, Rust or C++. For a `requirements.txt` with `numpy`, `requests` and `gdal` on Windows, the report says:
+Since engine 1.3.0, PyPilot recognises problems pip and uv cannot solve in a pip or uv project and suggests pixi: a dependency with no wheel whose build needs native libraries, a failed build missing a header such as `gdal.h`, CUDA sources without `nvcc`, or a repository that mixes Python with R, Rust or C++. For a `requirements.txt` with `numpy`, `requests` and `gdal` on Windows, the report says:
 
 ```
 [WARN ] GDAL 3.13.3 needs native libraries pip cannot install
@@ -84,7 +84,7 @@ It only suggests. Nothing changes until you choose **Initialize pixi project**, 
 
 **PyPilot: Initialize pixi project** opens the `pixi.toml` PyPilot would write as a preview, then writes it (optionally running `pixi install`) only after you confirm. It writes a separate `pixi.toml` and leaves `pyproject.toml`, `requirements.txt` and `environment.yml` untouched, so pip and CI keep working. Dependencies that conda-forge builds for every target platform become conda dependencies (`torch` becomes `pytorch`); the rest stay on PyPI with the reason as a comment. **PyPilot: Install pixi** installs pixi with its official installer if it is missing, and setting `pypilot.packageManager` to `pixi` makes setup write the `pixi.toml` itself. From a terminal, `pypilot migrate-to-pixi` and `pypilot migrate-conda --to pixi` do the same. Step by step: [Migrating to pixi](https://pypilot-dev.github.io/pypilot/pixi/migrate).
 
-These commands and settings are new since 1.2.1 and need an engine newer than 1.2.2; with an older engine, Initialize pixi project asks you to update it and Install pixi offers to run pixi's installer in a terminal.
+These commands and settings are new since 1.3.0 and require engine 1.3.0 or newer, which this extension pins; with an older engine (for example an old `pypilot` on `PATH`), Initialize pixi project asks you to update it and Install pixi offers to run pixi's installer in a terminal.
 
 ## Multi-root workspaces
 
@@ -142,7 +142,7 @@ The extension is a TypeScript client wrapping the native Rust `pypilot` helper b
 `package.json` carries the engine pin, which the engine's release workflow bumps on each release:
 
 ```json
-"pypilotEngine": { "version": "1.2.2", "sha256": { "pypilot-windows-x64.zip": "<hex>", "...": "..." } }
+"pypilotEngine": { "version": "1.3.0", "sha256": { "pypilot-windows-x64.zip": "<hex>", "...": "..." } }
 ```
 
 Every download is hashed before anything is extracted. The pinned version must match the SHA-256 in `package.json`; any other version (`pypilot.engineUpdates: "latest"`) must match the release's `SHA256SUMS` asset (`<sha256>  <asset>` per line). On a mismatch the archive is deleted and nothing is installed; a release without `SHA256SUMS` is refused. There is no switch to install unverified engines: build one yourself and use `pypilot.helperPath` instead. The "PyPilot" output channel logs which helper is used and which checksum each download matched.
