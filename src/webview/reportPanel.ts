@@ -7,6 +7,7 @@
  * color-coded badges and clickable action buttons that invoke VS Code commands.
  */
 
+import { randomBytes } from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -97,14 +98,20 @@ export class ReportPanel {
 // HTML renderer — converts the markdown report into a styled webview page.
 // ---------------------------------------------------------------------------
 
-function buildHtml(markdown: string): string {
+/**
+ * The page for `markdown`. Scripts only run with this render's nonce: no
+ * `unsafe-inline`, no inline event handlers (buttons carry `data-command`),
+ * so markup that slipped through `markdownToHtml` cannot execute. The nonce
+ * is new on every call, i.e. on every refresh of the panel.
+ */
+export function buildHtml(markdown: string, nonce = randomBytes(16).toString("base64")): string {
   const html = markdownToHtml(markdown);
   return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <title>PyPilot Report</title>
 <style>
   :root {
@@ -213,19 +220,21 @@ function buildHtml(markdown: string): string {
 </div>
 
 <div class="actions">
-  <button onclick="post('setup')">$(rocket) Fix Everything</button>
-  <button class="secondary" onclick="post('fixPython')">Fix Python Version</button>
-  <button class="secondary" onclick="post('fixCuda')">Fix CUDA / PyTorch</button>
+  <button data-command="setup">$(rocket) Fix Everything</button>
+  <button class="secondary" data-command="fixPython">Fix Python Version</button>
+  <button class="secondary" data-command="fixCuda">Fix CUDA / PyTorch</button>
 </div>
 
 <hr style="margin: 20px 0; border-color: var(--border);">
 
 ${html}
 
-<script>
+<script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
-function post(command, arg) {
-  vscode.postMessage({ command, arg });
+for (const button of document.querySelectorAll("button[data-command]")) {
+  button.addEventListener("click", () => {
+    vscode.postMessage({ command: button.dataset.command, arg: button.dataset.arg });
+  });
 }
 </script>
 </body>
