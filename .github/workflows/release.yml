@@ -26,16 +26,32 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      - name: Unit tests
+        run: bun test
+
       - name: Build extension
         run: bun run build
 
       - name: Package VSIX
         run: bun run package
 
+      - name: Audit bundled dependencies
+        run: bun audit --prod --audit-level=moderate
+
+      # CycloneDX SBOM of what the .vsix bundles: the production dependency
+      # tree only. cyclonedx-npm reads it through `npm ls`, which works on the
+      # node_modules bun installed (it has no bun.lock support of its own).
+      - name: Generate SBOM
+        run: |
+          version=$(node -p "require('./package.json').version")
+          npx --yes @cyclonedx/cyclonedx-npm@6.0.1 --omit dev --flatten-components --output-format JSON --output-file "pypilot-vscode-${version}.cdx.json"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: "*.vsix"
+          files: |
+            *.vsix
+            *.cdx.json
           generate_release_notes: true
 
       - name: Publish to Visual Studio Marketplace

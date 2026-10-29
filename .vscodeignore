@@ -15,4 +15,4 @@ out-e2e/**
 e2e/**
 test/**
 tsconfig.test.json
-CODEOWNERS
+*.cdx.json
