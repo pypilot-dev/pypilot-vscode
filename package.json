@@ -187,6 +187,47 @@
           }
         }
       }
+    ],
+    "walkthroughs": [
+      {
+        "id": "pypilot.gettingStarted",
+        "title": "Get started with PyPilot",
+        "description": "From an open folder to a working Python environment, including pixi projects.",
+        "steps": [
+          {
+            "id": "openProject",
+            "title": "Open a Python project",
+            "description": "PyPilot starts on its own in any folder with Python files or a Python manifest.\n[Open Folder](command:workbench.action.files.openFolder)",
+            "media": { "markdown": "media/walkthrough/open-project.md" },
+            "completionEvents": ["onContext:workspaceFolderCount > 0"]
+          },
+          {
+            "id": "check",
+            "title": "PyPilot checks it",
+            "description": "Python versions, wheels, CUDA builds and imports are checked when the folder opens. See everything it found in the report.\n[Show Environment Report](command:pypilot.doctor)",
+            "media": { "markdown": "media/walkthrough/check.md" },
+            "completionEvents": ["onCommand:pypilot.doctor", "onCommand:pypilot.openReport"]
+          },
+          {
+            "id": "fix",
+            "title": "Fix the environment",
+            "description": "One command creates or repairs the environment on a supported Python and selects it as the interpreter.\n[Set Up Environment](command:pypilot.setup)",
+            "media": { "markdown": "media/walkthrough/fix.md" },
+            "completionEvents": ["onCommand:pypilot.setup", "onCommand:pypilot.fixPython"]
+          },
+          {
+            "id": "pixi",
+            "title": "Using pixi? What's different",
+            "description": "In pixi projects the environment is .pixi/envs/<name>, PyPilot never creates a .venv or touches pixi.lock, and installs go through pixi add --pypi.\n[Choose pixi Environment](command:workbench.action.openSettings?%5B%22pypilot.pixiEnvironment%22%5D)",
+            "media": { "markdown": "media/walkthrough/pixi.md" },
+            "completionEvents": [
+              "onSettingChanged:pypilot.pixiEnvironment",
+              "onCommand:pypilot.installPixiCli",
+              "onCommand:pypilot.initPixiProject"
+            ]
+          }
+        ]
+      }
     ]
   },
   "scripts": {
