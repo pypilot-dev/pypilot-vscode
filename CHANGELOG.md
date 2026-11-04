@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.0
+
+### Changed
+
+- Runs engine 1.4.0 by default (`pypilotEngine`). **Fix environment** now runs
+  only the fixes the doctor found: a sync, a relock, reinstalling one package,
+  repairing the venv on its own Python, or editing one requirement. A healthy
+  project is left alone, and the Python moves only when a dependency forces it.
+  See the engine's
+  [1.4.0 notes](https://github.com/pypilot-dev/pypilot/blob/main/CHANGELOG.md).
+- The engine now reports known breakages (numpy 2 and old compiled packages,
+  removed APIs in your code by file and line, shadowing packages, yanked pins)
+  in the report panel and the environment notification.
+
 ## 1.3.0
 
 ### Security
