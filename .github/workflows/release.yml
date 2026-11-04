@@ -35,8 +35,15 @@ jobs:
       - name: Package VSIX
         run: bun run package
 
+      # Ignored advisories, each with the reason it does not apply:
+      # GHSA-g3hv-75wg-m249 (minimatch, published 2026-10-30): affects
+      # minimatch >= 7.0.0, < 11.0.1 with optimizationLevel >= 2. We bundle
+      # minimatch 5.1.9 (via vscode-languageclient 9), which is outside that
+      # range and has no optimizationLevel; bun audit reports it only as
+      # "< 11.0.1". Forcing minimatch 11 would need Node 20 (VS Code 1.85 runs
+      # Node 18). Revisit when vscode-languageclient moves off minimatch 5.
       - name: Audit bundled dependencies
-        run: bun audit --prod --audit-level=moderate
+        run: bun audit --prod --audit-level=moderate --ignore=GHSA-g3hv-75wg-m249
 
       # CycloneDX SBOM of what the .vsix bundles: the production dependency
       # tree only. cyclonedx-npm reads it through `npm ls`, which works on the
