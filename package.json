@@ -2,7 +2,7 @@
   "name": "pypilot-vscode",
   "displayName": "PyPilot",
   "description": "Sets up Python environments, resolves version and hardware compatibility without external AI or API keys.",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "license": "Apache-2.0",
   "publisher": "AbdullahMasood-005",
   "engines": {
@@ -306,12 +306,12 @@
     "vscode-languageclient": "^9.0.1"
   },
   "pypilotEngine": {
-    "version": "1.4.0",
+    "version": "1.4.1",
     "sha256": {
-      "pypilot-darwin-arm64.tar.gz": "af36f0f30dd99ca0c1edaffa1f232e8227f129ff367aa2ccb385cb79a230f206",
-      "pypilot-darwin-x64.tar.gz": "20ee556805efdcea2fe0a57dc717f2892eba6701f2e63198342ef3bf84048d8a",
-      "pypilot-linux-x64.tar.gz": "1ea4ab9ab20e5177fee62b934ebdd052386804c346fc7157dec35f7729da036e",
-      "pypilot-windows-x64.zip": "41ca6f506c7ddc408407c1d49e80c054e533812a685971994394822148be507d"
+      "pypilot-darwin-arm64.tar.gz": "bf15ab7eb6a906c04920d449c3e532767c8b0e3a4f78fc2f6e40610cce17a207",
+      "pypilot-darwin-x64.tar.gz": "58fa4d81e7a17e14912c0a295b2572c74a26e578330e06b9efb2dd2f85c1ddc3",
+      "pypilot-linux-x64.tar.gz": "a4584ceec332eeed4ff1fe2f5917906e944369a98038c7fc9dd8607a2f553d49",
+      "pypilot-windows-x64.zip": "b8e734df0dce85e7898a375054e4a73d3ca803624d205e17017eff3c040aeaec"
     }
   }
 }

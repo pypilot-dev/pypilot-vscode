@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.1
+
+### Changed
+
+- Runs engine 1.4.1 by default (`pypilotEngine`). Setup keeps a venv that is
+  already on the chosen Python and only syncs packages, instead of recreating
+  it. Setup, fix and install no longer half-delete a venv that a running
+  program uses on Windows: they stop with a message that names what to close
+  (a language server, a notebook kernel or a terminal using it).
+- The README explains Windows Smart App Control blocking the helper and how to
+  turn it off.
+
 ## 1.4.0
 
 ### Changed

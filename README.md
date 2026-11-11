@@ -147,7 +147,7 @@ The extension is a TypeScript client wrapping the native Rust `pypilot` helper b
 `package.json` carries the engine pin, which the engine's release workflow bumps on each release:
 
 ```json
-"pypilotEngine": { "version": "1.4.0", "sha256": { "pypilot-windows-x64.zip": "<hex>", "...": "..." } }
+"pypilotEngine": { "version": "1.4.1", "sha256": { "pypilot-windows-x64.zip": "<hex>", "...": "..." } }
 ```
 
 Every download is hashed before anything is extracted. The pinned version must match the SHA-256 in `package.json`; any other version (`pypilot.engineUpdates: "latest"`) must match the release's `SHA256SUMS` asset (`<sha256>  <asset>` per line). On a mismatch the archive is deleted and nothing is installed; a release without `SHA256SUMS` is refused. There is no switch to install unverified engines: build one yourself and use `pypilot.helperPath` instead. The "PyPilot" output channel logs which helper is used and which checksum each download matched.
