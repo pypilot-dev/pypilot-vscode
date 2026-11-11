@@ -41,6 +41,10 @@ Documentation: **<https://pypilot-dev.github.io/pypilot/>** ([VS Code guide](htt
 - Network access during initial startup to download the native `pypilot` helper binary (approximately 3 MB), unless `pypilot` is already on `PATH` or `pypilot.helperPath` is set. Behind a proxy, VS Code's `http.proxy` (or the system proxy) is used; with `http.proxySupport` set to `off`, the `HTTPS_PROXY` / `NO_PROXY` environment variables are.
 - Python does not need to be installed beforehand when using `uv` mode; `uv` downloads required interpreters directly.
 
+### Windows: Smart App Control
+
+On Windows 11 with Smart App Control on, Windows can block the `pypilot.exe` helper ("Part of this app has been blocked", and the language server does not start). The helper is not code signed yet, and Smart App Control has no per-app exception, so the fix is to turn it off: **Windows Security > App & browser control > Smart App Control settings > Off**. Defender and SmartScreen keep running, and current Windows 11 builds let you turn it back on later from the same page. Details in [Troubleshooting](https://pypilot-dev.github.io/pypilot/guide/troubleshooting#smart-app-control).
+
 ## Getting started
 
 1. Open a Python project directory in VS Code.
