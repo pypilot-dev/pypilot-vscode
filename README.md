@@ -10,10 +10,10 @@
   <a href="https://marketplace.visualstudio.com/items?itemName=AbdullahMasood-005.pypilot-vscode&ssr=false#review-details"><img src="https://vsmarketplacebadges.dev/rating-short/AbdullahMasood-005.pypilot-vscode.svg?label=rating&color=fe7d37" alt="Rating" /></a>
   <a href="https://open-vsx.org/extension/AbdullahMasood-005/pypilot-vscode"><img src="https://img.shields.io/open-vsx/v/AbdullahMasood-005/pypilot-vscode?label=open%20vsx&color=a60ee5" alt="Open VSX version" /></a>
   <a href="https://github.com/pypilot-dev/pypilot-vscode/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0" /></a>
-  <a href="https://github.com/pypilot-dev/pypilot-vscode"><img src="https://img.shields.io/github/stars/pypilot-dev/pypilot-vscode?style=social" alt="GitHub stars" /></a>
+  <a href="https://github.com/pypilot-dev/pypilot"><img src="https://img.shields.io/github/stars/pypilot-dev/pypilot?style=social" alt="GitHub stars" /></a>
 </p>
 
-> ⭐ **Enjoying PyPilot?** If it saved you from a broken environment, please [star it on GitHub](https://github.com/pypilot-dev/pypilot-vscode) or [leave a rating](https://marketplace.visualstudio.com/items?itemName=AbdullahMasood-005.pypilot-vscode&ssr=false#review-details). It's free and it helps other Python developers find it.
+> ⭐ **Enjoying PyPilot?** If it saved you from a broken environment, please [star it on GitHub](https://github.com/pypilot-dev/pypilot) or [leave a rating](https://marketplace.visualstudio.com/items?itemName=AbdullahMasood-005.pypilot-vscode&ssr=false#review-details). It's free and it helps other Python developers find it.
 
 PyPilot inspects Python projects, figures out which Python versions your dependencies actually support, and creates a working virtual environment. It resolves driver and CUDA compatibility for PyTorch or TensorFlow, checks package wheels on PyPI, and flags broken imports directly in the editor without external API calls.
 
@@ -210,7 +210,7 @@ PYPILOT_E2E_FRESH=1 bun run e2e
 
 PyPilot is free and open source, built and maintained in spare time. If it helps you:
 
-- ⭐ [Star it on GitHub](https://github.com/pypilot-dev/pypilot-vscode): it's the easiest way to show support.
+- ⭐ [Star it on GitHub](https://github.com/pypilot-dev/pypilot): it's the easiest way to show support.
 - 📝 [Rate it on the Marketplace](https://marketplace.visualstudio.com/items?itemName=AbdullahMasood-005.pypilot-vscode&ssr=false#review-details): reviews help others decide to try it.
 - 🐛 [Report a bug or request a feature](https://github.com/pypilot-dev/pypilot-vscode/issues): reproducible environment problems are especially welcome.
 
