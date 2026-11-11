@@ -21,6 +21,14 @@ This extension runs the same native Rust engine as [PyPilot for Zed](https://git
 
 Documentation: **<https://pypilot-dev.github.io/pypilot/>** ([VS Code guide](https://pypilot-dev.github.io/pypilot/vscode/), [commands](https://pypilot-dev.github.io/pypilot/vscode/commands), [settings](https://pypilot-dev.github.io/pypilot/vscode/settings), [pixi](https://pypilot-dev.github.io/pypilot/pixi/)).
 
+> [!CAUTION]
+> **Windows and macOS may block the PyPilot engine, because it is not code signed yet.**
+> - **Windows 11 Smart App Control** blocks `pypilot.exe` ("Part of this app has been blocked", or `os error 4551`), so the language server does not start. It has no per-app exception. Turn it off in **Windows Security > App & browser control > Smart App Control settings > Off**. Defender keeps running, and current Windows 11 builds let you turn it back on later.
+> - **Microsoft Defender SmartScreen** can show "Windows protected your PC" for a `pypilot.exe` you downloaded yourself: click **More info**, then **Run anyway**. If Defender antivirus removes it, restore it from **Windows Security > Virus & threat protection > Protection history**.
+> - **macOS** can say Apple could not verify `pypilot` for a copy downloaded in a browser: click **Open Anyway** in **System Settings > Privacy & Security**, or run `xattr -d com.apple.quarantine /path/to/pypilot`.
+>
+> Details: [Smart App Control](https://pypilot-dev.github.io/pypilot/guide/troubleshooting#smart-app-control), [SmartScreen and Defender](https://pypilot-dev.github.io/pypilot/guide/troubleshooting#defender), [macOS](https://pypilot-dev.github.io/pypilot/guide/troubleshooting#macos-gatekeeper).
+
 ## Features
 
 - **Environment setup**: Runs `uv init` and `uv add` when no `pyproject.toml` exists. In pip mode, records installations using `pip freeze > requirements.txt`.
@@ -41,9 +49,6 @@ Documentation: **<https://pypilot-dev.github.io/pypilot/>** ([VS Code guide](htt
 - Network access during initial startup to download the native `pypilot` helper binary (approximately 3 MB), unless `pypilot` is already on `PATH` or `pypilot.helperPath` is set. Behind a proxy, VS Code's `http.proxy` (or the system proxy) is used; with `http.proxySupport` set to `off`, the `HTTPS_PROXY` / `NO_PROXY` environment variables are.
 - Python does not need to be installed beforehand when using `uv` mode; `uv` downloads required interpreters directly.
 
-### Windows: Smart App Control
-
-On Windows 11 with Smart App Control on, Windows can block the `pypilot.exe` helper ("Part of this app has been blocked", and the language server does not start). The helper is not code signed yet, and Smart App Control has no per-app exception, so the fix is to turn it off: **Windows Security > App & browser control > Smart App Control settings > Off**. Defender and SmartScreen keep running, and current Windows 11 builds let you turn it back on later from the same page. Details in [Troubleshooting](https://pypilot-dev.github.io/pypilot/guide/troubleshooting#smart-app-control).
 
 ## Getting started
 
